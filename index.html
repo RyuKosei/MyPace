@@ -189,7 +189,7 @@
         </div>
 
         <!-- 右侧：当前条目列表（增量维护） -->
-        <div class="lg:col-span-2 bg-slate-800/80 border border-slate-700 rounded-xl p-4 md:p-5 flex flex-col">
+        <div class="lg:col-span-2 bg-slate-800/80 border border-slate-700 rounded-xl p-4 md:p-5 flex flex-col max-h-[460px] overflow-hidden">
           <div class="flex items-center justify-between mb-2">
             <h2 class="text-lg font-medium">当前足迹条目</h2>
             <button
@@ -1533,7 +1533,7 @@
 
           if (lines.length) {
             todayHistoryEl.textContent =
-              "那年今日：\n" + lines.join("\n");
+              lines.join("\n");
           } else {
             todayHistoryEl.textContent = "那年今日：暂无历史足迹。";
           }
