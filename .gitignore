@@ -4,3 +4,6 @@ __pycache__/
 /tmp/
 *.db
 *.sqlite3
+
+/json_file
+/templates
