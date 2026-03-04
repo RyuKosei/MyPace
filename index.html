@@ -2396,9 +2396,22 @@
 
     // ================== 事件绑定：表单 / 导入 / Tab / 地图按钮 ==================
 
-    // 注册 Service Worker
+    // 注册 Service Worker（确保每次发布后用户更快拿到新版本）
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("./sw.js").catch(() => {});
+      navigator.serviceWorker
+        .register("./sw.js", { updateViaCache: "none" })
+        .then((reg) => {
+          // 主动检查更新
+          try { reg.update(); } catch (e) {}
+          // 新 SW 接管后自动刷新一次（避免一直停留在旧缓存）
+          let reloaded = false;
+          navigator.serviceWorker.addEventListener("controllerchange", () => {
+            if (reloaded) return;
+            reloaded = true;
+            window.location.reload();
+          });
+        })
+        .catch(() => {});
     }
 
     document.addEventListener("DOMContentLoaded", async () => {
