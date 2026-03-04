@@ -1,0 +1,3095 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>行迹 MyPace</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Tailwind CSS -->
+  <script src="./vendor/tailwind.min.js"></script>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="./vendor/leaflet.css" />
+  <script src="./vendor/leaflet.js"></script>
+
+  <!-- ECharts -->
+  <script src="./vendor/echarts.min.js"></script>
+
+  <!-- Flatpickr 日期选择器 -->
+  <link rel="stylesheet" href="./vendor/flatpickr.min.css" />
+  <script src="./vendor/flatpickr.min.js"></script>
+  <script src="./vendor/flatpickr-zh.js"></script>
+
+  <!-- Chart.js -->
+  <script src="./vendor/chart.umd.min.js"></script>
+
+  <!-- three.js + globe.gl -->
+  <script src="./vendor/three.min.js"></script>
+  <script src="./vendor/globe.gl.min.js"></script>
+
+  <!-- html2canvas -->
+  <script src="./vendor/html2canvas.min.js"></script>
+
+  <style>
+    .leaflet-container {
+      font: inherit;
+    }
+    /* 简单的标签页切换过渡 */
+    .tab-section {
+      display: none;
+    }
+    .tab-section.active {
+      display: block;
+    }
+    .play-marker {
+      background: none !important;
+      border: none !important;
+    }
+    .play-marker .pin.pulse {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #ffeb3b;
+      box-shadow: 0 0 0 4px rgba(255, 235, 59, 0.5);
+      animation: play-pulse 0.6s ease-in-out infinite alternate;
+    }
+    @keyframes play-pulse {
+      from {
+        transform: scale(1);
+        opacity: 1;
+      }
+      to {
+        transform: scale(1.15);
+        opacity: 0.9;
+      }
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-900 text-slate-100">
+  <div class="max-w-6xl mx-auto px-4 py-4 md:py-8">
+    <!-- 顶部标题，与原项目“数据输入 / 数据透视 / 可视化视频”三块布局呼应 -->
+    <header class="mb-4 md:mb-6">
+      <h1 class="text-2xl md:text-3xl font-semibold tracking-tight">
+        行迹 MyPace · 足迹维护、分析与可视化
+      </h1>
+    </header>
+
+    <!-- 页签导航：数据输入 / 数据透视 / 可视化视频 -->
+    <nav class="mb-4 md:mb-6 border-b border-slate-700">
+      <div class="flex gap-2 md:gap-4">
+        <button
+          class="tab-btn px-3 py-2 text-sm md:text-base border-b-2 border-sky-500 text-sky-400 font-medium"
+          data-tab="input"
+        >
+          足迹输入
+        </button>
+        <button
+          class="tab-btn px-3 py-2 text-sm md:text-base border-b-2 border-transparent text-slate-300 hover:text-sky-300"
+          data-tab="stats"
+        >
+          数据透视
+        </button>
+        <button
+          class="tab-btn px-3 py-2 text-sm md:text-base border-b-2 border-transparent text-slate-300 hover:text-sky-300"
+          data-tab="visual"
+        >
+          足迹可视化
+        </button>
+      </div>
+    </nav>
+
+    <!-- 状态提示 -->
+    <p id="status-text" class="mb-4 text-xs md:text-sm text-slate-300">
+      页面加载中…
+    </p>
+
+    <!-- ========= 数据输入 Tab ========= -->
+    <section id="tab-input" class="tab-section active">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <!-- 左侧：表单（手动录入，与原项目的“录入表单”呼应） -->
+        <div class="lg:col-span-1 bg-slate-800/80 border border-slate-700 rounded-xl p-4 md:p-5 space-y-4">
+          <h2 class="text-lg font-medium mb-1">手动录入</h2>
+          <p class="text-xs md:text-sm text-slate-300">
+            选择日期和城市，点击「添加条目」，数据会自动保存到浏览器。
+          </p>
+
+          <form id="entry-form" class="space-y-3">
+            <div>
+              <label class="block text-xs text-slate-300 mb-1">日期</label>
+              <input
+                type="text"
+                id="entry-date"
+                placeholder=""
+                class="w-full rounded-md bg-slate-900 border border-slate-600 px-2 py-1 text-sm"
+                required
+              />
+            </div>
+
+            <!-- 城市 + 自动补全，下拉必须选中才会有经纬度 -->
+            <div id="entry-city-wrapper" class="relative">
+              <label class="block text-xs text-slate-300 mb-1">城市（从下拉条目中选择）</label>
+              <input
+                type="text"
+                id="entry-city"
+                placeholder=""
+                autocomplete="off"
+                class="w-full rounded-md bg-slate-900 border border-slate-600 px-2 py-1 text-sm"
+                required
+              />
+              <div
+                id="entry-city-dropdown"
+                class="absolute z-20 mt-1 w-full bg-slate-900 border border-slate-700 rounded-md shadow-lg max-h-48 overflow-auto text-xs md:text-sm hidden"
+              ></div>
+            </div>
+
+            <!-- 经纬度 + 国家隐藏，由城市自动补全选择后写入，禁止手动输入 -->
+            <input type="hidden" id="entry-lat" />
+            <input type="hidden" id="entry-lng" />
+            <input type="hidden" id="entry-country" />
+
+            <p id="entry-message" class="text-[11px] text-red-300 hidden">
+              请从下方下拉列表中选择地点，不能手输未检索到的城市。
+            </p>
+
+            <button
+              type="submit"
+              id="entry-submit-btn"
+              class="w-full mt-2 inline-flex items-center justify-center px-3 py-2 rounded-md bg-sky-500 hover:bg-sky-400 text-sm font-medium"
+            >
+              添加条目
+            </button>
+          </form>
+
+          <div class="pt-3 border-t border-slate-700 mt-3 space-y-2">
+            <h3 class="text-sm font-medium">导入 JSON</h3>
+            <p class="text-xs text-slate-300">
+              选择符合格式的 JSON 文件，可在当前数据基础上增量导入足迹。
+            </p>
+            <label class="inline-flex items-center justify-center cursor-pointer px-3 py-2 rounded-md bg-slate-700 hover:bg-slate-600 text-xs font-medium">
+              <span>选择 JSON 文件</span>
+              <input id="file-input" type="file" accept="application/json" class="hidden" />
+            </label>
+          </div>
+        </div>
+
+        <!-- 右侧：当前条目列表（增量维护） -->
+        <div class="lg:col-span-2 bg-slate-800/80 border border-slate-700 rounded-xl p-4 md:p-5 flex flex-col">
+          <div class="flex items-center justify-between mb-2">
+            <h2 class="text-lg font-medium">当前足迹条目</h2>
+            <button
+              id="btn-clear-storage"
+              class="text-xs px-2 py-1 rounded-md border border-slate-500 text-slate-200 hover:bg-slate-700"
+            >
+              清空本地数据
+            </button>
+          </div>
+          <div class="text-xs text-slate-300 mb-2">
+            新增 / 导入 / 删除操作会立即保存，下次打开页面会自动恢复。
+          </div>
+          <div class="border border-slate-700/80 rounded-lg overflow-hidden flex-1 min-h-[220px]">
+            <div class="max-h-80 overflow-auto">
+              <table class="min-w-full text-xs md:text-sm">
+                <thead class="bg-slate-900/70 sticky top-0 z-10">
+                  <tr>
+                    <th class="px-3 py-2 text-left font-semibold text-slate-300">日期</th>
+                    <th class="px-3 py-2 text-left font-semibold text-slate-300">城市</th>
+                    <th class="px-3 py-2 text-left font-semibold text-slate-300">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="table-body" class="divide-y divide-slate-700/80"></tbody>
+              </table>
+            </div>
+          </div>
+          <!-- 行内编辑时城市输入的下拉（固定定位，由 JS 控制位置与显示） -->
+          <div
+            id="edit-row-city-dropdown"
+            class="fixed hidden z-[100] max-h-48 overflow-auto min-w-[180px] bg-slate-800 border border-slate-600 rounded-md shadow-lg text-xs md:text-sm"
+          ></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========= 数据透视 Tab ========= -->
+    <section id="tab-stats" class="tab-section">
+      <div class="mb-4">
+        <h2 class="text-lg font-medium mb-1">数据透视概览</h2>
+        <p class="text-xs md:text-sm text-slate-300">
+          按时间和城市查看足迹统计情况。
+        </p>
+      </div>
+
+      <!-- 第一排小格子：条目数 / 城市数 / 国家数 / 总距离 -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="text-xs text-slate-400 mb-1">足迹条目数</div>
+          <div id="stat-total-entries" class="text-2xl md:text-3xl font-semibold">—</div>
+        </div>
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="text-xs text-slate-400 mb-1">去过的城市</div>
+          <div id="stat-total-cities" class="text-2xl md:text-3xl font-semibold">—</div>
+        </div>
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="text-xs text-slate-400 mb-1">经过国家</div>
+          <div id="stat-total-countries" class="text-2xl md:text-3xl font-semibold">—</div>
+        </div>
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="text-xs text-slate-400 mb-1">总移动距离</div>
+          <div id="stat-total-distance-km" class="text-2xl md:text-3xl font-semibold">—</div>
+        </div>
+      </div>
+
+      <!-- 第二排小格子：最北 / 最南 / 最东 / 最西（城市 + 经纬度） -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="text-xs text-slate-400 mb-1">最北足迹</div>
+          <div id="stat-northernmost" class="text-sm md:text-base text-slate-200 leading-snug whitespace-pre-line">—</div>
+        </div>
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="text-xs text-slate-400 mb-1">最南足迹</div>
+          <div id="stat-southernmost" class="text-sm md:text-base text-slate-200 leading-snug whitespace-pre-line">—</div>
+        </div>
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="text-xs text-slate-400 mb-1">最东足迹</div>
+          <div id="stat-easternmost" class="text-sm md:text-base text-slate-200 leading-snug whitespace-pre-line">—</div>
+        </div>
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="text-xs text-slate-400 mb-1">最西足迹</div>
+          <div id="stat-westernmost" class="text-sm md:text-base text-slate-200 leading-snug whitespace-pre-line">—</div>
+        </div>
+      </div>
+
+      <!-- 整行内容：出行节奏 / 那年今日（竖向排列） -->
+      <div class="grid grid-cols-1 gap-3 mb-4">
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="text-xs text-slate-400 mb-1">出行节奏</div>
+          <div
+            id="stat-avg-detail"
+            class="text-xs md:text-sm text-slate-200 leading-relaxed"
+          >
+            —
+          </div>
+        </div>
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="text-xs text-slate-400 mb-1">那年今日</div>
+          <div
+            id="stat-today-history"
+            class="mt-1 text-xs md:text-sm text-slate-200 leading-relaxed whitespace-pre-line"
+          >
+            —
+          </div>
+        </div>
+      </div>
+
+      <!-- 按年份聚合：城市数 / 距离 Top 10 -->
+      <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4 mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <div>
+            <h3 class="text-base md:text-lg font-medium">按年份</h3>
+            <p class="text-[11px] text-slate-400 mt-1">
+              查看各年份的数据对比。
+            </p>
+          </div>
+          <div id="year-mode-btns" class="inline-flex rounded-lg border border-slate-600 overflow-hidden text-xs">
+            <button
+              type="button"
+              data-mode="cities"
+              class="px-2 py-1 bg-sky-500 text-white"
+            >
+              城市数
+            </button>
+            <button
+              type="button"
+              data-mode="distance"
+              class="px-2 py-1 bg-slate-800 text-slate-200 hover:bg-slate-700"
+            >
+              里程数
+            </button>
+          </div>
+        </div>
+        <div class="w-full h-64 md:h-80">
+          <canvas id="chart-year"></canvas>
+        </div>
+      </div>
+
+      <!-- 按城市聚合：停留天数 / 访问次数 Top 10 -->
+      <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4 mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <div>
+            <h3 class="text-base md:text-lg font-medium">按城市</h3>
+            <p class="text-[11px] text-slate-400 mt-1">
+              查看各城市详细信息。
+            </p>
+          </div>
+          <div id="city-mode-btns" class="inline-flex rounded-lg border border-slate-600 overflow-hidden text-xs">
+            <button
+              type="button"
+              data-mode="duration"
+              class="px-2 py-1 bg-sky-500 text-white"
+            >
+              停留天数
+            </button>
+            <button
+              type="button"
+              data-mode="visits"
+              class="px-2 py-1 bg-slate-800 text-slate-200 hover:bg-slate-700"
+            >
+              访问次数
+            </button>
+          </div>
+        </div>
+        <div class="w-full h-64 md:h-80">
+          <canvas id="chart-city"></canvas>
+        </div>
+      </div>
+
+      <!-- 按月份：选择年份 + 12 个月柱状图（城市数 / 里程数） -->
+      <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4 mb-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <div>
+            <h3 class="text-base md:text-lg font-medium">按月份</h3>
+            <p class="text-[11px] text-slate-400 mt-1">
+              选择年份，查看该年 1–12 月的数据。
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="text-slate-300 text-xs">年份</label>
+            <select
+              id="month-year-select"
+              class="rounded bg-slate-900 border border-slate-600 px-2 py-1 text-xs text-slate-200"
+            >
+              <option value="">—</option>
+            </select>
+            <div id="month-mode-btns" class="inline-flex rounded-lg border border-slate-600 overflow-hidden text-xs">
+              <button type="button" data-mode="cities" class="px-2 py-1 bg-sky-500 text-white">城市数</button>
+              <button type="button" data-mode="distance" class="px-2 py-1 bg-slate-800 text-slate-200 hover:bg-slate-700">里程数</button>
+            </div>
+          </div>
+        </div>
+        <div class="w-full h-64 md:h-80">
+          <canvas id="chart-month"></canvas>
+        </div>
+      </div>
+
+      <!-- 按经纬度：纬度/经度切换，每 5° 一档，停留时长 -->
+      <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4 mb-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <div>
+            <h3 class="text-base md:text-lg font-medium">按经纬度（停留时长）</h3>
+            <p class="text-[11px] text-slate-400 mt-1">每 5 度为一档，仅统计出现过的区间</p>
+          </div>
+          <div id="latlng-mode-btns" class="inline-flex rounded-lg border border-slate-600 overflow-hidden text-xs">
+            <button type="button" data-mode="lat" class="px-2 py-1 bg-sky-500 text-white">纬度</button>
+            <button type="button" data-mode="lng" class="px-2 py-1 bg-slate-800 text-slate-200 hover:bg-slate-700">经度</button>
+          </div>
+        </div>
+        <div class="w-full h-56 md:h-72">
+          <canvas id="chart-lat-lng-duration"></canvas>
+        </div>
+      </div>
+
+      <!-- 饼图：国家占比 + 城市停留时间占比 -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-base md:text-lg font-medium">国家占比</h3>
+          </div>
+          <div class="w-full h-60 md:h-72">
+            <canvas id="chart-country"></canvas>
+          </div>
+        </div>
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-base md:text-lg font-medium">城市停留时间占比</h3>
+          </div>
+          <div class="w-full h-60 md:h-72">
+            <canvas id="chart-city-duration-pie"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========= 可视化 / 导出 Tab ========= -->
+    <section id="tab-visual" class="tab-section">
+      <div class="mb-4">
+        <p class="text-xs md:text-sm text-slate-300">
+          选择时间范围，设置虚拟形象，播放足迹可视化
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <!-- 左侧：时间范围 + 个人形象 + 播放控制 -->
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4 space-y-4">
+          <div>
+            <h3 class="text-base md:text-lg font-medium mb-2">时间范围</h3>
+            <div class="flex flex-wrap items-center gap-2 text-xs md:text-sm">
+              <label class="text-slate-300">开始</label>
+              <input
+                type="text"
+                id="map-start-date"
+                placeholder="YYYY-MM-DD"
+                class="rounded bg-slate-900 border border-slate-600 px-2 py-1 text-xs"
+              />
+              <span class="basis-full w-full h-0 block" aria-hidden="true"></span>
+              <label class="text-slate-300">结束</label>
+              <input
+                type="text"
+                id="map-end-date"
+                placeholder="YYYY-MM-DD"
+                class="rounded bg-slate-900 border border-slate-600 px-2 py-1 text-xs"
+              />
+              <button
+                type="button"
+                id="map-load"
+                class="ml-auto inline-flex items-center px-2 py-1 rounded-md bg-sky-500 hover:bg-sky-400 text-xs font-medium"
+              >
+                加载路线
+              </button>
+            </div>
+          </div>
+
+          <div class="pt-3 border-t border-slate-700">
+            <h3 class="text-base md:text-lg font-medium mb-2">个人形象</h3>
+            <p class="text-[11px] text-slate-400 mb-3">
+              上传一张头像作为地图上的移动形象。
+            </p>
+            <div class="flex items-center gap-3">
+              <div
+                id="avatar-preview"
+                class="w-16 h-16 md:w-20 md:h-20 rounded-full bg-white flex items-center justify-center overflow-hidden shadow-inner"
+              >
+                <svg viewBox="0 0 64 64" class="w-12 h-12 text-slate-400">
+                  <circle cx="32" cy="24" r="14" fill="currentColor" opacity="0.3" />
+                  <circle cx="32" cy="22" r="10" fill="currentColor" />
+                  <path
+                    d="M16 52c3-9 9-14 16-14s13 5 16 14"
+                    fill="currentColor"
+                    opacity="0.3"
+                  />
+                </svg>
+              </div>
+              <label
+                class="inline-flex items-center px-3 py-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-xs font-medium cursor-pointer"
+              >
+                选择头像
+                <input
+                  type="file"
+                  id="avatar-upload"
+                  accept="image/png,image/jpeg,image/jpg,image/webp"
+                  class="hidden"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div class="pt-3 border-t border-slate-700">
+            <h3 class="text-base md:text-lg font-medium mb-2">播放控制</h3>
+            <div class="flex flex-wrap items-center gap-2 mb-2 text-xs md:text-sm">
+              <button
+                type="button"
+                id="map-play"
+                class="inline-flex items-center px-3 py-1.5 rounded-md bg-emerald-500 hover:bg-emerald-400 text-xs font-medium"
+              >
+                播放
+              </button>
+              <button
+                type="button"
+                id="map-pause"
+                class="inline-flex items-center px-3 py-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-xs font-medium"
+              >
+                暂停
+              </button>
+              <span class="ml-1 text-slate-300 text-xs md:text-sm min-w-[8rem]" id="play-time">
+                当前: —
+              </span>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 text-xs md:text-sm">
+              <span class="text-slate-400">倍速</span>
+              <div id="speed-btns" class="inline-flex rounded-lg border border-slate-600 overflow-hidden text-xs">
+                <button
+                  type="button"
+                  data-speed="1"
+                  class="px-2 py-1 bg-sky-500 text-white"
+                >
+                  1×
+                </button>
+                <button
+                  type="button"
+                  data-speed="2"
+                  class="px-2 py-1 bg-slate-800 text-slate-200 hover:bg-slate-700"
+                >
+                  2×
+                </button>
+                <button
+                  type="button"
+                  data-speed="4"
+                  class="px-2 py-1 bg-slate-800 text-slate-200 hover:bg-slate-700"
+                >
+                  4×
+                </button>
+                <button
+                  type="button"
+                  data-speed="8"
+                  class="px-2 py-1 bg-slate-800 text-slate-200 hover:bg-slate-700"
+                >
+                  8×
+                </button>
+                <button
+                  type="button"
+                  data-speed="16"
+                  class="px-2 py-1 bg-slate-800 text-slate-200 hover:bg-slate-700"
+                >
+                  16×
+                </button>
+              </div>
+            </div>
+
+            <div class="mt-3">
+              <button
+                type="button"
+                id="map-export-video"
+                class="inline-flex items-center px-3 py-1.5 rounded-md bg-indigo-500 hover:bg-indigo-400 text-xs font-medium"
+              >
+                导出视频
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右侧：2D 地图 + 3D 地球 -->
+        <div class="lg:col-span-2 bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="flex flex-wrap items-center justify-between mb-2 gap-2">
+            <div class="flex items-center gap-2">
+              <h3 class="text-base md:text-lg font-medium">播放视图</h3>
+              <div class="inline-flex rounded-lg border border-slate-600 overflow-hidden text-xs ml-2">
+                <button
+                  type="button"
+                  id="btn-map-2d"
+                  class="px-2 py-1 bg-sky-500 text-white"
+                >
+                  2D 地图
+                </button>
+                <button
+                  type="button"
+                  id="btn-map-3d"
+                  class="px-2 py-1 bg-slate-800 text-slate-200 hover:bg-slate-700"
+                >
+                  3D 地球
+                </button>
+              </div>
+            </div>
+            <button
+              id="btn-fit-map"
+              class="text-xs px-2 py-1 rounded-md border border-slate-500 text-slate-200 hover:bg-slate-700"
+            >
+              适配全部足迹
+            </button>
+          </div>
+          <div class="relative w-full h-72 md:h-96 rounded-lg overflow-hidden">
+            <div id="map" class="w-full h-full"></div>
+            <div
+              id="globe-container"
+              class="hidden w-full h-full"
+            ></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // ================== 全局工具函数 ==================
+
+    function qs(id) {
+      return document.getElementById(id);
+    }
+    function qsAll(sel) {
+      return document.querySelectorAll(sel);
+    }
+    function fmtDate(iso) {
+      if (iso == null || iso === "") return "";
+      const s = String(iso).slice(0, 10);
+      return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
+    }
+
+    // ================== 全局状态与工具函数 ==================
+
+    const STORAGE_KEY = "mypace_entries_v1";
+    const AVATAR_STORAGE_KEY = "mypace_avatar_v1";
+
+    const appState = {
+      entries: [],
+      // 透视中间结果（对应原来 /stats/pivot 的返回值）
+      pivot: null,
+      yearMode: "cities",
+      cityMode: "duration",
+      monthYear: null,     // 按月份图选中的年份
+      monthMode: "cities", // 按月份：城市数 | 里程数
+      chartYear: null,     // Chart.js 实例
+      chartCity: null,     // Chart.js 实例
+      chartMonth: null,
+      latLngMode: "lat",
+      chartLatLngDuration: null,
+      chartCountry: null,
+      chartCityDurationPie: null,
+      editingEntryId: null,
+      map: null,
+      markersLayer: null,
+      routeLayer: null,
+      avatarDataUrl: null
+    };
+
+    function setStatus(msg, isError = false) {
+      const el = document.getElementById("status-text");
+      if (!el) return;
+      el.textContent = msg;
+      el.className =
+        "mb-4 text-xs md:text-sm " +
+        (isError ? "text-red-300" : "text-slate-300");
+    }
+
+    function parseDate(str) {
+      const d = new Date(str);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    function formatDate(d) {
+      if (!d) return "—";
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+
+    function saveToStorage() {
+      try {
+        const plain = appState.entries.map(e => ({
+          id: e.id,
+          datetime: e.datetime,
+          city: e.city,
+          lat: e.lat,
+          lng: e.lng,
+          country: e.country || ""
+        }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(plain));
+        if (appState.avatarDataUrl) {
+          localStorage.setItem(AVATAR_STORAGE_KEY, appState.avatarDataUrl);
+        }
+      } catch (e) {
+        console.warn("写入 LocalStorage 失败：", e);
+      }
+    }
+
+    // ========== 离线城市自动补全（本地 data/cities.json） ==========
+    let citiesDB = [];
+    let citiesDBLoaded = false;
+    let cityAutocompleteList = [];
+    let cityAutocompleteSelected = -1;
+    let cityAutocompleteTimer = null;
+
+    async function loadCitiesDB() {
+      if (citiesDBLoaded) return;
+      try {
+        const res = await fetch("./data/cities.json");
+        citiesDB = await res.json();
+        citiesDBLoaded = true;
+        console.log(`离线城市库已加载: ${citiesDB.length} 条`);
+      } catch (e) {
+        console.warn("加载离线城市库失败", e);
+      }
+    }
+
+    function searchCitiesLocal(query, limit) {
+      limit = limit || 20;
+      const q = (query || "").trim().toLowerCase();
+      if (!q || q.length < 1) return [];
+      const results = [];
+      const hasChinese = /[\u4e00-\u9fff]/.test(q);
+      for (const c of citiesDB) {
+        if (results.length >= limit) break;
+        const matchName = (c.n || "").toLowerCase().includes(q);
+        const matchFull = (c.f || "").toLowerCase().includes(q);
+        const matchPy = !hasChinese && (c.p || "").includes(q);
+        if (matchName || matchFull || matchPy) {
+          results.push({
+            display_name: c.f,
+            lat: c.la,
+            lng: c.ln,
+            country: c.c
+          });
+        }
+      }
+      // 短名精确匹配排在前面
+      results.sort((a, b) => {
+        const aExact = (a.display_name || "").toLowerCase().includes(q) ? 0 : 1;
+        const bExact = (b.display_name || "").toLowerCase().includes(q) ? 0 : 1;
+        return aExact - bExact;
+      });
+      return results.slice(0, limit);
+    }
+
+    function renderListToDropdown(dropdownEl, list, onSelectCb) {
+      if (!dropdownEl) return;
+      dropdownEl.innerHTML = "";
+      if (!list.length) {
+        dropdownEl.classList.add("hidden");
+        return;
+      }
+      list.forEach((item) => {
+        const div = document.createElement("div");
+        div.className = "px-2 py-1 cursor-pointer hover:bg-slate-700 text-xs md:text-sm";
+        div.textContent = item.display_name;
+        div.addEventListener("click", () => {
+          if (onSelectCb) onSelectCb(item);
+          else selectCity(item);
+        });
+        dropdownEl.appendChild(div);
+      });
+      dropdownEl.classList.remove("hidden");
+    }
+
+    function fetchCitySuggestions(query, opts) {
+      const dropdown = (opts && opts.dropdownEl) || document.getElementById("entry-city-dropdown");
+      if (!dropdown) return;
+      const q = (query || "").trim();
+      if (!q || q.length < 1) {
+        if (!opts) cityAutocompleteList = [];
+        dropdown.innerHTML = "";
+        dropdown.classList.add("hidden");
+        return;
+      }
+      const list = searchCitiesLocal(q, 20);
+      if (opts && opts.dropdownEl) {
+        renderListToDropdown(opts.dropdownEl, list, opts.onSelect);
+      } else {
+        cityAutocompleteList = list;
+        cityAutocompleteSelected = list.length ? 0 : -1;
+        renderCityDropdown();
+      }
+    }
+
+    function renderCityDropdown() {
+      const dropdown = document.getElementById("entry-city-dropdown");
+      if (!dropdown) return;
+      dropdown.innerHTML = "";
+      if (!cityAutocompleteList.length) {
+        dropdown.classList.add("hidden");
+        return;
+      }
+      cityAutocompleteList.forEach((item, idx) => {
+        const div = document.createElement("div");
+        div.className =
+          "px-2 py-1 cursor-pointer hover:bg-slate-700 " +
+          "text-xs md:text-sm " +
+          (idx === cityAutocompleteSelected ? "bg-slate-700" : "");
+        div.textContent = item.display_name;
+        div.addEventListener("click", () => {
+          selectCity(item);
+        });
+        dropdown.appendChild(div);
+      });
+      dropdown.classList.remove("hidden");
+    }
+
+    function selectCity(item) {
+      if (!item) return;
+      const cityInput = document.getElementById("entry-city");
+      const latInput = document.getElementById("entry-lat");
+      const lngInput = document.getElementById("entry-lng");
+      const countryInput = document.getElementById("entry-country");
+      const msg = document.getElementById("entry-message");
+      cityInput.value = item.display_name || "";
+      latInput.value = item.lat != null ? item.lat : "";
+      lngInput.value = item.lng != null ? item.lng : "";
+      if (countryInput) {
+        countryInput.value = item.country || "";
+      }
+      if (msg) msg.classList.add("hidden");
+      cityAutocompleteList = [];
+      const dropdown = document.getElementById("entry-city-dropdown");
+      if (dropdown) {
+        dropdown.innerHTML = "";
+        dropdown.classList.add("hidden");
+      }
+    }
+
+    function loadFromStorage() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) {
+          setStatus("未检测到历史数据，请先手动录入或导入 JSON。");
+          return;
+        }
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) {
+          setStatus("LocalStorage 中数据格式不正确，已忽略。", true);
+          return;
+        }
+        appState.entries = arr.map(e => ({
+          id: e.id || crypto.randomUUID(),
+          datetime: e.datetime || "",
+          city: e.city || "",
+          lat: e.lat != null ? Number(e.lat) : null,
+          lng: e.lng != null ? Number(e.lng) : null,
+          country: e.country || ""
+        }));
+        setStatus("已加载本地足迹数据。");
+        // 读取头像
+        const avatar = localStorage.getItem(AVATAR_STORAGE_KEY);
+        if (avatar) {
+          appState.avatarDataUrl = avatar;
+          const wrap = document.getElementById("avatar-preview");
+          if (wrap) {
+            wrap.innerHTML =
+              '<img src="' +
+              avatar +
+              '" alt="avatar" class="w-full h-full object-cover" />';
+          }
+        }
+        updateMapDateRangeFromEntries();
+        renderAll();
+      } catch (e) {
+        console.warn(e);
+        setStatus("读取本地数据失败。", true);
+      }
+    }
+
+    // ================== 视图渲染：表格 / 统计 / 图表 / 地图 ==================
+
+    function renderTable() {
+      const tbody = document.getElementById("table-body");
+      if (!tbody) return;
+      tbody.innerHTML = "";
+
+      const sorted = [...appState.entries].sort((a, b) => {
+        const da = parseDate(a.datetime) || new Date(0);
+        const db = parseDate(b.datetime) || new Date(0);
+        return da - db;
+      });
+
+      for (const e of sorted) {
+        const tr = document.createElement("tr");
+        tr.className = "hover:bg-slate-700/40 transition-colors";
+        const dateStr = e.datetime ? String(e.datetime).slice(0, 10) : "";
+        if (appState.editingEntryId === e.id) {
+          // 行内编辑模式：日期和城市变为可交互输入框
+          tr.innerHTML = `
+            <td class="px-3 py-2 whitespace-nowrap align-middle">
+              <input
+                type="text"
+                data-edit-date="1"
+                value="${dateStr}"
+                class="w-full rounded-md bg-slate-900 border border-slate-600 px-2 py-1 text-xs md:text-sm"
+              />
+            </td>
+            <td class="px-3 py-2 max-w-[240px] whitespace-nowrap align-middle">
+              <input
+                type="text"
+                data-edit-city="1"
+                value="${e.city || ""}"
+                autocomplete="off"
+                data-lat="${e.lat != null ? String(e.lat) : ""}"
+                data-lng="${e.lng != null ? String(e.lng) : ""}"
+                data-country="${e.country || ""}"
+                class="w-full rounded-md bg-slate-900 border border-slate-600 px-2 py-1 text-xs md:text-sm"
+              />
+            </td>
+            <td class="px-3 py-2 whitespace-nowrap align-middle">
+              <button
+                data-id="${e.id}"
+                class="btn-save text-[11px] px-2 py-1 rounded bg-sky-500 hover:bg-sky-400 text-white mr-1"
+              >
+                保存
+              </button>
+              <button
+                data-id="${e.id}"
+                class="btn-cancel text-[11px] px-2 py-1 rounded bg-slate-600 hover:bg-slate-500 text-white"
+              >
+                取消
+              </button>
+            </td>
+          `;
+        } else {
+          tr.innerHTML = `
+            <td class="px-3 py-2 whitespace-nowrap">${dateStr}</td>
+            <td class="px-3 py-2 max-w-[240px] whitespace-nowrap overflow-hidden text-ellipsis" title="${e.city || ""}">${e.city || ""}</td>
+            <td class="px-3 py-2 whitespace-nowrap">
+              <button
+                data-id="${e.id}"
+                class="btn-edit text-[11px] px-2 py-1 rounded bg-slate-600 hover:bg-slate-500 text-white mr-1"
+              >
+                修改
+              </button>
+              <button
+                data-id="${e.id}"
+                class="btn-delete text-[11px] px-2 py-1 rounded bg-red-500/80 hover:bg-red-500 text-white"
+              >
+                删除
+              </button>
+            </td>
+          `;
+        }
+        tbody.appendChild(tr);
+      }
+
+      // 绑定删除事件
+      tbody.querySelectorAll(".btn-delete").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-id");
+          if (!id) return;
+          if (!confirm("确定要删除该条足迹吗？")) return;
+          appState.entries = appState.entries.filter(e => e.id !== id);
+          if (appState.editingEntryId === id) appState.editingEntryId = null;
+          saveToStorage();
+          renderAll();
+        });
+      });
+
+      // 绑定修改事件：切换为行内编辑模式
+      tbody.querySelectorAll(".btn-edit").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-id");
+          if (!id) return;
+          appState.editingEntryId = id;
+          renderTable();
+        });
+      });
+
+      // 行内编辑：保存 / 取消
+      tbody.querySelectorAll(".btn-save").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-id");
+          if (!id) return;
+          const entry = appState.entries.find((e) => e.id === id);
+          if (!entry) return;
+
+          const row = btn.closest("tr");
+          if (!row) return;
+          const dateInput = row.querySelector('input[data-edit-date="1"]');
+          const cityInput = row.querySelector('input[data-edit-city="1"]');
+          if (!dateInput || !cityInput) return;
+
+          const date = dateInput.value.trim();
+          const city = cityInput.value.trim();
+          if (!date || !city) {
+            alert("请至少填写日期和城市。");
+            return;
+          }
+
+          const latStr = cityInput.dataset.lat || "";
+          const lngStr = cityInput.dataset.lng || "";
+          const country = cityInput.dataset.country || "";
+          if (!latStr || !lngStr) {
+            alert("请从下拉列表中选择城市，以便获取经纬度。");
+            return;
+          }
+
+          const lat = Number(latStr);
+          const lng = Number(lngStr);
+          const datetime = `${date}T00:00:00`;
+
+          entry.datetime = datetime;
+          entry.city = city;
+          entry.lat = !isNaN(lat) ? lat : null;
+          entry.lng = !isNaN(lng) ? lng : null;
+          entry.country = country;
+
+          appState.editingEntryId = null;
+          saveToStorage();
+          renderAll();
+        });
+      });
+
+      tbody.querySelectorAll(".btn-cancel").forEach(btn => {
+        btn.addEventListener("click", () => {
+          appState.editingEntryId = null;
+          renderTable();
+        });
+      });
+
+      // 为行内日期输入挂载 flatpickr
+      const inlineDateInput = tbody.querySelector('input[data-edit-date="1"]');
+      if (inlineDateInput && window.flatpickr) {
+        flatpickr(inlineDateInput, {
+          dateFormat: "Y-m-d",
+          locale: flatpickr.l10ns.zh
+        });
+      }
+
+      // 为行内城市输入挂接自动补全 & 下拉
+      const inlineCityInput = tbody.querySelector('input[data-edit-city="1"]');
+      const inlineDropdown = document.getElementById("edit-row-city-dropdown");
+      if (inlineCityInput && inlineDropdown) {
+        let timer = null;
+
+        function positionDropdown() {
+          const rect = inlineCityInput.getBoundingClientRect();
+          inlineDropdown.style.left = `${rect.left + window.scrollX}px`;
+          inlineDropdown.style.top = `${rect.bottom + window.scrollY + 2}px`;
+          inlineDropdown.style.width = `${rect.width}px`;
+        }
+
+        inlineCityInput.addEventListener("focus", () => {
+          positionDropdown();
+          const q = inlineCityInput.value.trim();
+          if (q.length >= 2) {
+            fetchCitySuggestions(q, {
+              dropdownEl: inlineDropdown,
+              onSelect: (item) => {
+                inlineCityInput.value = item.display_name || "";
+                inlineCityInput.dataset.lat = item.lat != null ? String(item.lat) : "";
+                inlineCityInput.dataset.lng = item.lng != null ? String(item.lng) : "";
+                inlineCityInput.dataset.country = item.country || "";
+                inlineDropdown.classList.add("hidden");
+              }
+            });
+          }
+        });
+
+        inlineCityInput.addEventListener("input", () => {
+          inlineCityInput.dataset.lat = "";
+          inlineCityInput.dataset.lng = "";
+          inlineCityInput.dataset.country = "";
+          clearTimeout(timer);
+          const q = inlineCityInput.value.trim();
+          if (!q) {
+            inlineDropdown.classList.add("hidden");
+            inlineDropdown.innerHTML = "";
+            return;
+          }
+          timer = setTimeout(() => {
+            positionDropdown();
+            fetchCitySuggestions(q, {
+              dropdownEl: inlineDropdown,
+              onSelect: (item) => {
+                inlineCityInput.value = item.display_name || "";
+                inlineCityInput.dataset.lat = item.lat != null ? String(item.lat) : "";
+                inlineCityInput.dataset.lng = item.lng != null ? String(item.lng) : "";
+                inlineCityInput.dataset.country = item.country || "";
+                inlineDropdown.classList.add("hidden");
+              }
+            });
+          }, 300);
+        });
+
+        document.addEventListener("click", (e) => {
+          if (
+            e.target !== inlineCityInput &&
+            !inlineDropdown.contains(e.target)
+          ) {
+            inlineDropdown.classList.add("hidden");
+          }
+        });
+      }
+    }
+
+    function updateEntrySubmitButton() {
+      const btn = document.getElementById("entry-submit-btn");
+      if (!btn) return;
+      btn.textContent = "添加条目";
+    }
+
+    // ================== 透视计算 ==================
+
+    function haversineKm(lat1, lon1, lat2, lon2) {
+      const R = 6371; // km
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) *
+          Math.cos(lat2 * Math.PI / 180) *
+          Math.sin(dLon / 2) *
+          Math.sin(dLon / 2);
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function computePivot() {
+      const entries = appState.entries;
+      if (!entries.length) {
+        appState.pivot = null;
+        return null;
+      }
+
+      // 排序后的副本（按时间），方便计算距离 / 停留时长 / 城市更换间隔
+      const sorted = [...entries].filter(e => e.datetime).sort((a, b) => {
+        const da = parseDate(a.datetime) || new Date(0);
+        const db = parseDate(b.datetime) || new Date(0);
+        return da - db;
+      });
+
+      const citySet = new Set();
+      const countrySet = new Set();
+      const yearCityMap = new Map();      // year -> Set(city)
+      const yearDistanceMap = new Map();  // year -> km
+      const yearMonthCitySet = new Map(); // "YYYY-MM" -> Set(city)
+      const yearMonthDistance = new Map();// "YYYY-MM" -> km
+      const cityDurationMap = new Map();  // city -> days
+      const cityVisitMap = new Map();     // city -> visits
+      const cityChangeDiffs = [];         // 天数数组，用于计算平均多久换城市
+      const latBucketDuration = new Map(); // 每5度纬度 -> 停留天数
+      const lngBucketDuration = new Map(); // 每5度经度 -> 停留天数
+
+      function monthKey(d) {
+        const y = d.getFullYear();
+        const m = d.getMonth() + 1;
+        return `${y}-${String(m).padStart(2, "0")}`;
+      }
+
+      let totalDistanceKm = 0;
+      let minD = null;
+      let maxD = null;
+      let last = null;
+
+      for (const e of sorted) {
+        const d = parseDate(e.datetime);
+        if (d) {
+          if (!minD || d < minD) minD = d;
+          if (!maxD || d > maxD) maxD = d;
+          const year = d.getFullYear();
+          const mk = monthKey(d);
+
+          if (e.city) {
+            citySet.add(e.city);
+            let s = yearCityMap.get(year);
+            if (!s) {
+              s = new Set();
+              yearCityMap.set(year, s);
+            }
+            s.add(e.city);
+            if (!yearMonthCitySet.has(mk)) yearMonthCitySet.set(mk, new Set());
+            yearMonthCitySet.get(mk).add(e.city);
+            cityVisitMap.set(e.city, (cityVisitMap.get(e.city) || 0) + 1);
+            // 通过城市名称前缀提取国家（例如“中国 - …”、“日本 - …”）
+            const parts = String(e.city).split(" - ");
+            const countryName = (parts[0] || "").trim();
+            if (countryName) {
+              countrySet.add(countryName);
+            }
+          }
+        }
+
+        if (
+          last &&
+          last.lat != null && last.lng != null &&
+          e.lat != null && e.lng != null
+        ) {
+          const km = haversineKm(last.lat, last.lng, e.lat, e.lng);
+          totalDistanceKm += km;
+          if (d) {
+            const mk = monthKey(d);
+            yearMonthDistance.set(mk, (yearMonthDistance.get(mk) || 0) + km);
+          }
+
+          const lastDate = parseDate(last.datetime);
+          const curDate = d;
+          if (lastDate && curDate) {
+            const diffDays = Math.max(0, (curDate - lastDate) / 86400000);
+
+            // 停留时长：算在上一条所在城市头上
+            if (last.city) {
+              cityDurationMap.set(
+                last.city,
+                (cityDurationMap.get(last.city) || 0) + diffDays
+              );
+            }
+            // 按经纬度 5 度分档累计停留时长（只统计有经纬度的上一条）
+            if (last.lat != null && last.lng != null) {
+              const latB = Math.floor(Number(last.lat) / 5) * 5;
+              const lngB = Math.floor(Number(last.lng) / 5) * 5;
+              latBucketDuration.set(latB, (latBucketDuration.get(latB) || 0) + diffDays);
+              lngBucketDuration.set(lngB, (lngBucketDuration.get(lngB) || 0) + diffDays);
+            }
+
+            // 城市变化间隔：只有城市发生变化时才计算
+            if (last.city && e.city && last.city !== e.city) {
+              cityChangeDiffs.push(diffDays);
+            }
+          }
+
+          const segYear = lastDate ? lastDate.getFullYear() : (d ? d.getFullYear() : null);
+          if (segYear != null) {
+            yearDistanceMap.set(
+              segYear,
+              (yearDistanceMap.get(segYear) || 0) + km
+            );
+          }
+        }
+
+        last = e;
+      }
+
+      const avg_days_between_city =
+        cityChangeDiffs.length > 0
+          ? Math.round(
+              (cityChangeDiffs.reduce((a, b) => a + b, 0) /
+                cityChangeDiffs.length) *
+                10
+            ) / 10
+          : null;
+
+      const by_year_cities = Array.from(yearCityMap.entries())
+        .map(([year, set]) => ({ year, count: set.size }))
+        .sort((a, b) => b.year - a.year);
+
+      const by_year_distance = Array.from(yearDistanceMap.entries())
+        .map(([year, km]) => ({ year, km: Math.round(km) }))
+        .sort((a, b) => b.year - a.year);
+
+      const by_city_duration = Array.from(cityDurationMap.entries())
+        .map(([city, days]) => ({ city, days: Math.round(days * 10) / 10 }))
+        .sort((a, b) => b.days - a.days);
+
+      const by_city_visits = Array.from(cityVisitMap.entries())
+        .map(([city, count]) => ({ city, count }))
+        .sort((a, b) => b.count - a.count);
+
+      // 按年月聚合：by_year_month[year] = { cities: [12], distance: [12] }（1–12 月）
+      const by_year_month = {};
+      const years = Array.from(yearCityMap.keys()).sort((a, b) => a - b);
+      for (const y of years) {
+        const cities = [];
+        const distance = [];
+        for (let m = 1; m <= 12; m++) {
+          const key = `${y}-${String(m).padStart(2, "0")}`;
+          const set = yearMonthCitySet.get(key);
+          cities.push(set ? set.size : 0);
+          distance.push(Math.round(yearMonthDistance.get(key) || 0));
+        }
+        by_year_month[y] = { cities, distance };
+      }
+
+      // 城市停留时间占比饼图：低于 1% 的归为「其他」
+      const totalDays = Array.from(cityDurationMap.values()).reduce((a, b) => a + b, 0);
+      // 经纬度极值：最北、最南、最东、最西（经度以东经为正，与北京等常用表述一致）
+      let northernmost = null;
+      let southernmost = null;
+      let easternmost = null;
+      let westernmost = null;
+      for (const e of sorted) {
+        const lat = e.lat != null ? Number(e.lat) : NaN;
+        const lng = e.lng != null ? Number(e.lng) : NaN;
+        if (Number.isNaN(lat) || Number.isNaN(lng)) continue;
+        if (!northernmost || lat > northernmost.lat) northernmost = { city: e.city, lat, lng };
+        if (!southernmost || lat < southernmost.lat) southernmost = { city: e.city, lat, lng };
+        if (!easternmost || lng > easternmost.lng) easternmost = { city: e.city, lat, lng };
+        if (!westernmost || lng < westernmost.lng) westernmost = { city: e.city, lat, lng };
+      }
+
+      const city_duration_pie = [];
+      let otherSum = 0;
+      const sortedDuration = Array.from(cityDurationMap.entries())
+        .map(([city, days]) => ({ city, days }))
+        .sort((a, b) => b.days - a.days);
+      for (const { city, days } of sortedDuration) {
+        const proportion = totalDays > 0 ? days / totalDays : 0;
+        const shortName = city.split(" - ").map((p) => p.trim()).filter(Boolean).pop() || city;
+        if (proportion >= 0.01) {
+          city_duration_pie.push({ name: shortName, value: Math.round(days * 10) / 10 });
+        } else {
+          otherSum += days;
+        }
+      }
+      if (otherSum > 0) {
+        city_duration_pie.push({ name: "其他", value: Math.round(otherSum * 10) / 10 });
+      }
+
+      // 按纬度/经度 5° 分档的停留时长（只保留出现过的区间）
+      const by_lat_duration = Array.from(latBucketDuration.entries())
+        .filter(([, days]) => days > 0)
+        .map(([bucket, days]) => {
+          const label = bucket >= 0 ? `${bucket}°N-${bucket + 5}°N` : `${Math.abs(bucket + 5)}°S-${Math.abs(bucket)}°S`;
+          return { bucket, label, days: Math.round(days * 10) / 10 };
+        })
+        .sort((a, b) => a.bucket - b.bucket);
+      const by_lng_duration = Array.from(lngBucketDuration.entries())
+        .filter(([, days]) => days > 0)
+        .map(([bucket, days]) => {
+          const label = bucket >= 0 ? `${bucket}°E-${bucket + 5}°E` : `${Math.abs(bucket)}°W-${Math.abs(bucket + 5)}°W`;
+          return { bucket, label, days: Math.round(days * 10) / 10 };
+        })
+        .sort((a, b) => a.bucket - b.bucket);
+
+      const country_counts = Array.from(countrySet.values())
+        .map((name) => ({
+          name,
+          value: entries.filter((e) => {
+            if (!e.city) return false;
+            const head = String(e.city).split(" - ")[0].trim();
+            return head === name;
+          }).length
+        }))
+        .sort((a, b) => b.value - a.value);
+
+      const pivot = {
+        total_entries: entries.length,
+        total_cities: citySet.size,
+        total_countries: countrySet.size,
+        total_distance_km: Math.round(totalDistanceKm),
+        avg_days_between_city,
+        min_date: minD,
+        max_date: maxD,
+        by_year_cities,
+        by_year_distance,
+        by_year_month,
+        by_city_duration,
+        by_city_visits,
+        country_counts,
+        city_duration_pie,
+        by_lat_duration,
+        by_lng_duration,
+        northernmost,
+        southernmost,
+        easternmost,
+        westernmost
+      };
+
+      appState.pivot = pivot;
+      return pivot;
+    }
+
+    function getCityShortName(city) {
+      const raw = (city || "").trim();
+      if (!raw) return "";
+      const parts = raw
+        .split(" - ")
+        .map((p) => p.trim())
+        .filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : raw;
+    }
+
+    function formatLatLng(lat, lng) {
+      if (lat == null || lng == null) return "";
+      const latStr = lat >= 0 ? `北纬 ${lat.toFixed(2)}°` : `南纬 ${(-lat).toFixed(2)}°`;
+      const lngStr = lng >= 0 ? `东经 ${lng.toFixed(2)}°` : `西经 ${(-lng).toFixed(2)}°`;
+      return `${latStr} ${lngStr}`;
+    }
+
+    function renderSummary() {
+      const pivot = computePivot();
+      const entries = appState.entries;
+
+      // 基础概览
+      document.getElementById("stat-total-entries").textContent =
+        entries.length || "—";
+
+      const totalCities = pivot ? pivot.total_cities : 0;
+      document.getElementById("stat-total-cities").textContent =
+        totalCities || "—";
+
+      document.getElementById("stat-total-countries").textContent =
+        pivot && pivot.total_countries ? pivot.total_countries : 0;
+      document.getElementById("stat-total-distance-km").textContent =
+        pivot && pivot.total_distance_km ? pivot.total_distance_km + " km" : "0 km";
+
+      // 经纬度极值：最北 / 最南 / 最东 / 最西
+      const setExtreme = (id, point) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (!point || point.city == null) {
+          el.textContent = "—";
+          return;
+        }
+        const short = getCityShortName(point.city) || point.city || "—";
+        el.textContent = short + "\n" + formatLatLng(point.lat, point.lng);
+      };
+      setExtreme("stat-northernmost", pivot && pivot.northernmost);
+      setExtreme("stat-southernmost", pivot && pivot.southernmost);
+      setExtreme("stat-easternmost", pivot && pivot.easternmost);
+      setExtreme("stat-westernmost", pivot && pivot.westernmost);
+
+      // 出行节奏与「那年今日」
+      const avgDetailEl = document.getElementById("stat-avg-detail");
+      const todayHistoryEl = document.getElementById("stat-today-history");
+
+      if (pivot && pivot.avg_days_between_city != null) {
+        // 当前所在城市与停留天数
+        const sorted = [...entries]
+          .filter((e) => e.datetime)
+          .sort((a, b) => {
+            const da = parseDate(a.datetime) || new Date(0);
+            const db = parseDate(b.datetime) || new Date(0);
+            return da - db;
+          });
+        const today = new Date();
+        const todayDate = new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          today.getDate()
+        );
+        let currentLine = "—";
+        let currentCity = "";
+        let lastDate = null;
+        if (sorted.length) {
+          const last = sorted[sorted.length - 1];
+          currentCity = last.city || "";
+          const lastD = parseDate(last.datetime);
+          if (lastD) {
+            lastDate = new Date(
+              lastD.getFullYear(),
+              lastD.getMonth(),
+              lastD.getDate()
+            );
+            const stayDays = Math.max(
+              0,
+              Math.floor((todayDate - lastDate) / 86400000)
+            );
+            const cityName =
+              getCityShortName(last.city) || "当前城市";
+            const avg = pivot.avg_days_between_city;
+            const line1 = `你平均每 ${avg} 天前往一个不同城市。`;
+            const line2 =
+              stayDays < avg
+                ? `现在在「${cityName}」已停留 ${stayDays} 天，还在适应这里的环境吗？`
+                : `现在在「${cityName}」已停留 ${stayDays} 天，是时候出去走走了。`;
+            currentLine = `${line1} ${line2}`;
+          }
+        }
+        avgDetailEl.textContent = currentLine;
+
+        // 那年今日：按“停留城市”统计，从最早轨迹年份开始，
+        // 按城市聚合：例如「淄博市：2020、2021、2025 年」
+        const todayMonth = todayDate.getMonth();
+        const todayDay = todayDate.getDate();
+
+        if (sorted.length && lastDate) {
+          const firstD = parseDate(sorted[0].datetime);
+          const firstDate = new Date(
+            firstD.getFullYear(),
+            firstD.getMonth(),
+            firstD.getDate()
+          );
+          const startYear = firstDate.getFullYear();
+          const endYear = todayDate.getFullYear() - 1; // 只看历史年份
+
+          const byCity = new Map(); // cityShort -> [years...]
+
+          for (let y = startYear; y <= endYear; y++) {
+            const target = new Date(y, todayMonth, todayDay);
+            if (target < firstDate) continue;
+
+            let stayCity = null;
+            for (let i = 0; i < sorted.length; i++) {
+              const dStartRaw = parseDate(sorted[i].datetime);
+              if (!dStartRaw) continue;
+              const dStart = new Date(
+                dStartRaw.getFullYear(),
+                dStartRaw.getMonth(),
+                dStartRaw.getDate()
+              );
+              let dEnd;
+              if (i + 1 < sorted.length) {
+                const dEndRaw = parseDate(sorted[i + 1].datetime);
+                if (!dEndRaw) continue;
+                dEnd = new Date(
+                  dEndRaw.getFullYear(),
+                  dEndRaw.getMonth(),
+                  dEndRaw.getDate()
+                );
+              } else {
+                // 最后一段视为持续到今天之后
+                dEnd = new Date(
+                  todayDate.getFullYear(),
+                  todayDate.getMonth(),
+                  todayDate.getDate() + 1
+                );
+              }
+
+              if (target >= dStart && target < dEnd) {
+                stayCity = sorted[i].city || "";
+                break;
+              }
+            }
+
+            if (!stayCity || !stayCity.trim()) continue;
+            if (currentCity && stayCity === currentCity) continue;
+
+            const shortName = getCityShortName(stayCity) || stayCity;
+            if (!byCity.has(shortName)) {
+              byCity.set(shortName, []);
+            }
+            byCity.get(shortName).push(y);
+          }
+
+          const lines = [];
+          for (const [cityName, years] of byCity.entries()) {
+            const ys = [...years].sort((a, b) => a - b);
+            lines.push(`${cityName}：${ys.join("、")} 年`);
+          }
+
+          if (lines.length) {
+            todayHistoryEl.textContent =
+              "那年今日：\n" + lines.join("\n");
+          } else {
+            todayHistoryEl.textContent = "那年今日：暂无历史足迹。";
+          }
+        } else {
+          todayHistoryEl.textContent = "那年今日：暂无历史足迹。";
+        }
+      } else {
+        avgDetailEl.textContent = "暂无足够数据计算出行节奏。";
+        todayHistoryEl.textContent = "那年今日：暂无历史足迹。";
+      }
+    }
+
+    function renderYearChart() {
+      if (!appState.pivot) return;
+      const canvas = document.getElementById("chart-year");
+      if (!canvas) return;
+
+      const mode = appState.yearMode || "cities";
+      const src =
+        mode === "cities"
+          ? appState.pivot.by_year_cities
+          : appState.pivot.by_year_distance;
+      const topN = src.slice(0, 10);
+      const labels = topN.map((x) => x.year + " 年");
+      const values = topN.map((x) =>
+        mode === "cities" ? x.count : x.km
+      );
+
+      if (appState.chartYear) {
+        appState.chartYear.destroy();
+        appState.chartYear = null;
+      }
+      if (!topN.length) return;
+
+      appState.chartYear = new Chart(canvas.getContext("2d"), {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: mode === "cities" ? "城市数" : "公里",
+              data: values,
+              backgroundColor: "#38bdf8"
+            }
+          ]
+        },
+        options: {
+          indexAxis: "y",
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { enabled: true }
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              grid: { color: "rgba(148,163,184,0.2)" },
+              ticks: { color: "#e2e8f0" }
+            },
+            y: {
+              grid: { display: false },
+              ticks: { color: "#e2e8f0" }
+            }
+          },
+          animation: {
+            duration: 800,
+            easing: "easeOutCubic"
+          }
+        }
+      });
+    }
+
+    function renderCityPivotChart() {
+      if (!appState.pivot) return;
+      const canvas = document.getElementById("chart-city");
+      if (!canvas) return;
+
+      const mode = appState.cityMode || "duration";
+      const src =
+        mode === "duration"
+          ? appState.pivot.by_city_duration
+          : appState.pivot.by_city_visits;
+      const topN = src.slice(0, 10);
+      const labels = topN.map((x) => x.city || "");
+      const values = topN.map((x) =>
+        mode === "duration" ? x.days : x.count
+      );
+
+      if (appState.chartCity) {
+        appState.chartCity.destroy();
+        appState.chartCity = null;
+      }
+      if (!topN.length) return;
+
+      appState.chartCity = new Chart(canvas.getContext("2d"), {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: mode === "duration" ? "天" : "次",
+              data: values,
+              backgroundColor: "#38bdf8"
+            }
+          ]
+        },
+        options: {
+          indexAxis: "y",
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { enabled: true }
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              grid: { color: "rgba(148,163,184,0.2)" },
+              ticks: { color: "#e2e8f0" }
+            },
+            y: {
+              grid: { display: false },
+              ticks: { color: "#e2e8f0" }
+            }
+          },
+          animation: {
+            duration: 800,
+            easing: "easeOutCubic"
+          }
+        }
+      });
+    }
+
+    function renderCountryPie() {
+      const canvas = document.getElementById("chart-country");
+      if (!canvas || !appState.pivot) return;
+      const cl = appState.pivot.country_counts || [];
+
+      if (appState.chartCountry) {
+        appState.chartCountry.destroy();
+        appState.chartCountry = null;
+      }
+      if (!cl.length) return;
+
+      appState.chartCountry = new Chart(canvas.getContext("2d"), {
+        type: "pie",
+        data: {
+          labels: cl.map((x) => x.name),
+          datasets: [
+            {
+              data: cl.map((x) => x.value),
+              backgroundColor: [
+                "#6c9ef8",
+                "#8bb3ff",
+                "#4fc3f7",
+                "#81c784",
+                "#ffb74d",
+                "#ba68c8"
+              ],
+              borderColor: "#020617",
+              borderWidth: 2
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: "bottom",
+              labels: { boxWidth: 12, color: "#e2e8f0", font: { size: 11 } }
+            },
+            tooltip: { enabled: true }
+          },
+          animation: { duration: 800 }
+        }
+      });
+    }
+
+    // ================== 地图与播放（复刻原 2D / 3D 动画） ==================
+
+    let routeMarkers = [];
+    let routePoints = [];
+    let playbackZoom = 5;
+    let playbackEntries = [];
+    let playbackIndex = 0;
+    let playbackSpeed = 1;
+    let playbackRaf = null;
+    let personMarker2d = null;
+    let playbackOnEnd = null;
+    let isRecordingVideo = false;
+
+    function mapDateStr(prefix) {
+      const el = qs("map-" + prefix + "-date");
+      if (!el || !el.value) return "";
+      return el.value;
+    }
+
+    function updateMapDateRangeFromEntries() {
+      const entries = appState.entries.filter((e) => e.datetime);
+      if (entries.length === 0) return;
+      let minD = null;
+      let maxD = null;
+      for (const e of entries) {
+        const d = parseDate(e.datetime);
+        if (!d) continue;
+        if (!minD || d < minD) minD = d;
+        if (!maxD || d > maxD) maxD = d;
+      }
+      const startEl = qs("map-start-date");
+      const endEl = qs("map-end-date");
+      if (startEl && minD) startEl.value = formatDate(minD);
+      if (endEl && maxD) endEl.value = formatDate(maxD);
+    }
+
+    async function loadRoute() {
+      // 使用本地 entries + 日期范围过滤，替代原来的 /entries/range 后端接口
+      const startStr = mapDateStr("start");
+      const endStr = mapDateStr("end");
+      let list = appState.entries.filter((e) => e.datetime);
+
+      if (startStr) {
+        const startDate = new Date(startStr + "T00:00:00");
+        list = list.filter(
+          (e) => parseDate(e.datetime) >= startDate
+        );
+      }
+      if (endStr) {
+        const endDate = new Date(endStr + "T23:59:59");
+        list = list.filter(
+          (e) => parseDate(e.datetime) <= endDate
+        );
+      }
+
+      playbackEntries = list
+        .slice()
+        .sort((a, b) => {
+          const da = parseDate(a.datetime) || new Date(0);
+          const db = parseDate(b.datetime) || new Date(0);
+          return da - db;
+        })
+        .map((e) => Object.assign({}, e));
+
+      const map = appState.map;
+      if (!map) return;
+
+      // 清理之前的整图快照和旧路线，只保留本次时间范围内的播放线路
+      if (appState.markersLayer) {
+        appState.markersLayer.clearLayers();
+      }
+      if (appState.routeLayer) {
+        map.removeLayer(appState.routeLayer);
+        appState.routeLayer = null;
+      }
+      routeMarkers.forEach((m) => map.removeLayer(m));
+      routeMarkers = [];
+
+      if (playbackEntries.length === 0) {
+        routePoints = [];
+        setTimeNodeLabel(null);
+        return;
+      }
+
+      const points = [];
+      for (const e of playbackEntries) {
+        const lat = e.lat ?? e._lat;
+        const lng = e.lng ?? e._lng;
+        if (lat != null && lng != null) {
+          points.push([lat, lng]);
+          e._lat = lat;
+          e._lng = lng;
+        }
+      }
+      routePoints = points;
+      if (points.length > 1) {
+        appState.routeLayer = L.polyline(points, {
+          color: "#0af",
+          weight: 2,
+          opacity: 0.85
+        }).addTo(map);
+        appState.routeLayer.bringToFront();
+        map.fitBounds(points);
+        const z = map.getZoom();
+        playbackZoom = Math.max(4, Math.min(z, 8));
+      }
+      playbackIndex = 0;
+
+      // 每个城市一个空心圆圈（和 2D 播放保持一致）
+      playbackEntries.forEach((e) => {
+        if (e._lat != null) {
+          const m = L.circleMarker([e._lat, e._lng], {
+            radius: 6,
+            fillColor: "#6c9ef8",
+            color: "#fff",
+            weight: 2,
+            fillOpacity: 0
+          });
+          m.bindTooltip(
+            `${fmtDate(e.datetime)} ${e.city || ""}`,
+            { permanent: false }
+          );
+          m.addTo(map);
+          routeMarkers.push(m);
+        }
+      });
+      updateGlobeData();
+    }
+
+    function segmentDurationKm(km) {
+      if (km <= 0) return 1;
+      return Math.min(3, Math.max(1, 1 + km / 2500));
+    }
+
+    function getPlaybackSegments() {
+      const segs = [];
+      for (let i = 0; i < playbackEntries.length - 1; i++) {
+        const a = playbackEntries[i];
+        const b = playbackEntries[i + 1];
+        if (a._lat == null || b._lat == null) continue;
+        const km = haversineKm(a._lat, a._lng, b._lat, b._lng);
+        segs.push({
+          from: a,
+          to: b,
+          durationSec: segmentDurationKm(km)
+        });
+      }
+      return segs;
+    }
+
+    function setTimeNodeLabel(entry) {
+      const el = qs("play-time");
+      if (el) {
+        el.textContent =
+          "当前: " +
+          (entry
+            ? fmtDate(entry.datetime) + " " + (entry.city || "")
+            : "—");
+      }
+    }
+
+    function bearingDeg(lat1, lng1, lat2, lng2) {
+      const dLon = ((lng2 - lng1) * Math.PI) / 180;
+      const lat1r = (lat1 * Math.PI) / 180;
+      const lat2r = (lat2 * Math.PI) / 180;
+      const y = Math.sin(dLon) * Math.cos(lat2r);
+      const x =
+        Math.cos(lat1r) * Math.sin(lat2r) -
+        Math.sin(lat1r) *
+          Math.cos(lat2r) *
+          Math.cos(dLon);
+      return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+    }
+
+    const defaultAvatarSvg =
+      '<svg viewBox="0 0 64 64" fill="currentColor" width="64" height="64"><circle cx="32" cy="22" r="12" fill="#94a3b8"/><circle cx="32" cy="22" r="8" fill="#e2e8f0"/><path d="M16 54c3-9 9-14 16-14s13 5 16 14" fill="#94a3b8"/></svg>';
+
+    function markerIcon2d() {
+      const hasCustom = !!appState.avatarDataUrl;
+      const inner = hasCustom
+        ? '<div class="w-8 h-8 rounded-full overflow-hidden border-2 border-white shadow-md"><img src="' +
+          appState.avatarDataUrl +
+          '" class="w-full h-full object-cover"/></div>'
+        : '<div class="w-8 h-8 rounded-full bg-white flex items-center justify-center shadow-md text-slate-500">' +
+          defaultAvatarSvg +
+          "</div>";
+      return L.divIcon({
+        className: "play-marker",
+        html: inner,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16]
+      });
+    }
+
+    function update2dPosition(lat, lng, entry, isPause, bearing) {
+      const map = appState.map;
+      if (!map || lat == null || lng == null) return;
+      if (!personMarker2d) {
+        personMarker2d = L.marker([lat, lng], {
+          icon: markerIcon2d()
+        }).addTo(map);
+      } else {
+        personMarker2d.setLatLng([lat, lng]);
+        personMarker2d.setIcon(markerIcon2d());
+      }
+      // 正常播放时视图跟随角色移动；导出视频时锁定相机，避免录屏时底图与轨迹发生错位
+      if (!isRecordingVideo) {
+        map.setView([lat, lng], playbackZoom);
+      }
+    }
+
+    function updateRouteProgress2d(
+      segmentIndex,
+      currentLat,
+      currentLng,
+      atCity
+    ) {
+      if (!appState.routeLayer || !routePoints.length) return;
+      const partial = routePoints.slice(
+        0,
+        Math.min(segmentIndex + 1, routePoints.length)
+      );
+      if (!atCity && currentLat != null && currentLng != null) {
+        partial.push([currentLat, currentLng]);
+      }
+      appState.routeLayer.setLatLngs(partial);
+    }
+
+    function update2dCityCircles(visitedCount) {
+      const map = appState.map;
+      if (!map) return;
+      routeMarkers.forEach((m) => {
+        if (map.hasLayer(m)) map.removeLayer(m);
+      });
+      for (
+        let i = 0;
+        i < visitedCount && i < routeMarkers.length;
+        i++
+      ) {
+        routeMarkers[i].addTo(map);
+      }
+    }
+
+    function runPlayback() {
+      const segs = getPlaybackSegments();
+      const highlightDur = 0.8;
+      if (!playbackEntries.length) return;
+
+      const startTime = performance.now();
+
+       // 播放/录制开始前，先自适应当前时间范围内的所有点，确保视图里能看到整条线路
+       if (appState.map && routePoints.length) {
+         try {
+           appState.map.fitBounds(routePoints, { padding: [40, 40] });
+           // 更新播放时使用的缩放级别
+           playbackZoom = appState.map.getZoom();
+         } catch (e) {}
+       }
+
+      // 清空整条线路，播放时只画已走过部分
+      if (appState.routeLayer) appState.routeLayer.setLatLngs([]);
+
+      // 第一个城市圈立即点亮
+      update2dCityCircles(1);
+
+      const first = playbackEntries[0];
+      const bearing0 = segs.length
+        ? bearingDeg(
+            first._lat,
+            first._lng,
+            segs[0].to._lat,
+            segs[0].to._lng
+          )
+        : null;
+
+      setTimeNodeLabel(first);
+      update2dPosition(first._lat, first._lng, first, true, bearing0);
+      updateRouteProgress2d(0, first._lat, first._lng, true);
+            update3dPosition(first._lat, first._lng, 0);
+      playbackIndex = 0;
+
+      function tick(now) {
+        if (!playbackRaf) return;
+        const elapsed = ((now - startTime) / 1000) * playbackSpeed;
+        let t = 0;
+
+        if (playbackEntries.length === 1) {
+          setTimeNodeLabel(playbackEntries[0]);
+          playbackRaf = requestAnimationFrame(tick);
+          return;
+        }
+
+        for (let i = 0; i < segs.length; i++) {
+          const seg = segs[i];
+          const segEnd = t + seg.durationSec;
+          const pauseEnd = segEnd + highlightDur;
+          const bearingMove = bearingDeg(
+            seg.from._lat,
+            seg.from._lng,
+            seg.to._lat,
+            seg.to._lng
+          );
+
+          // 移动阶段：在 from → to 之间插值
+          if (elapsed <= segEnd) {
+            let prog = (elapsed - t) / seg.durationSec;
+            prog = Math.min(1, Math.max(0, prog));
+            const lat =
+              seg.from._lat + (seg.to._lat - seg.from._lat) * prog;
+            const lng =
+              seg.from._lng + (seg.to._lng - seg.from._lng) * prog;
+            setTimeNodeLabel(seg.from);
+            update2dPosition(lat, lng, seg.from, false, bearingMove);
+            updateRouteProgress2d(i, lat, lng, false);
+            update3dPosition(lat, lng, playbackIndex);
+            playbackRaf = requestAnimationFrame(tick);
+            return;
+          }
+
+          // 到达城市后的停留阶段
+          if (elapsed <= pauseEnd) {
+            playbackIndex = i + 1;
+            update2dCityCircles(playbackIndex + 1);
+            setTimeNodeLabel(seg.to);
+            const bearingAtStop =
+              i + 1 < segs.length
+                ? bearingDeg(
+                    seg.to._lat,
+                    seg.to._lng,
+                    segs[i + 1].to._lat,
+                    segs[i + 1].to._lng
+                  )
+                : bearingMove;
+            update2dPosition(
+              seg.to._lat,
+              seg.to._lng,
+              seg.to,
+              true,
+              bearingAtStop
+            );
+            updateRouteProgress2d(
+              i + 1,
+              seg.to._lat,
+              seg.to._lng,
+              true
+            );
+            update3dPosition(seg.to._lat, seg.to._lng, i + 1);
+            playbackRaf = requestAnimationFrame(tick);
+            return;
+          }
+
+          t = pauseEnd;
+        }
+
+        // 播放结束，收尾
+        playbackIndex = playbackEntries.length - 1;
+        const lastEntry = playbackEntries[playbackIndex];
+        const lastSeg =
+          segs.length > 0 ? segs[segs.length - 1] : null;
+        const lastBearing = lastSeg
+          ? bearingDeg(
+              lastSeg.from._lat,
+              lastSeg.from._lng,
+              lastEntry._lat,
+              lastEntry._lng
+            )
+          : null;
+
+        setTimeNodeLabel(lastEntry);
+        update2dPosition(
+          lastEntry._lat,
+          lastEntry._lng,
+          lastEntry,
+          true,
+          lastBearing
+        );
+        updateRouteProgress2d(
+          playbackIndex,
+          lastEntry._lat,
+          lastEntry._lng,
+          true
+        );
+        update3dPosition(lastEntry._lat, lastEntry._lng, playbackIndex);
+        playbackRaf = null;
+        if (appState.routeLayer && routePoints.length) {
+          appState.routeLayer.setLatLngs(routePoints);
+        }
+        update2dCityCircles(routeMarkers.length);
+        updateGlobeData();
+        if (typeof playbackOnEnd === "function") playbackOnEnd();
+      }
+
+      playbackRaf = requestAnimationFrame(tick);
+    }
+
+    function initMap() {
+      if (appState.map) return;
+      const mapEl = document.getElementById("map");
+      if (!mapEl) return;
+
+      appState.map = L.map(mapEl, {
+        center: [35, 105],
+        zoom: 4,
+        worldCopyJump: true
+      });
+      L.tileLayer(
+        "https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}",
+        {
+          maxZoom: 18,
+          subdomains: ["1", "2", "3", "4"],
+          attribution: "&copy; 高德地图"
+        }
+      ).addTo(appState.map);
+
+      appState.markersLayer = L.layerGroup().addTo(appState.map);
+    }
+
+    function renderMap() {
+      // 保留一个“静态快照”：使用全部 entries 画一次轨迹和点，
+      // 方便在未加载播放路线时浏览整体足迹。
+      initMap();
+      const map = appState.map;
+      if (!map) return;
+
+      appState.markersLayer.clearLayers();
+      if (appState.routeLayer) {
+        map.removeLayer(appState.routeLayer);
+        appState.routeLayer = null;
+      }
+
+      const coords = [];
+      for (const e of appState.entries) {
+        const lat = e.lat;
+        const lng = e.lng;
+        if (lat == null || lng == null || isNaN(lat) || isNaN(lng)) continue;
+
+        coords.push([lat, lng]);
+
+        const marker = L.circleMarker([lat, lng], {
+          radius: 5,
+          color: "#ffffff",
+          weight: 1.5,
+          fillColor: "#38bdf8",
+          fillOpacity: 0.18
+        }).bindPopup(
+          `${e.datetime || ""}<br>${e.city || ""}`
+        );
+        appState.markersLayer.addLayer(marker);
+      }
+
+      if (coords.length > 0) {
+        appState.routeLayer = L.polyline(coords, {
+          color: "#38bdf8",
+          weight: 2,
+          opacity: 0.8
+        }).addTo(map);
+        map.fitBounds(appState.routeLayer.getBounds(), { padding: [40, 40] });
+      } else {
+        map.setView([20, 0], 2);
+      }
+    }
+
+    // ================== 3D 地球（globe.gl），与播放逻辑联动 ==================
+
+    let globeGl = null;
+
+    function updateGlobeData() {
+      if (!globeGl || !playbackEntries.length) return;
+      const withCoords = playbackEntries.filter(
+        (e) => e._lat != null && e._lng != null
+      );
+      globeGl.customLayerData([]);
+      if (withCoords.length > 1) {
+        const arcs = [];
+        for (let i = 0; i < withCoords.length - 1; i++) {
+          arcs.push({
+            startLat: withCoords[i]._lat,
+            startLng: withCoords[i]._lng,
+            endLat: withCoords[i + 1]._lat,
+            endLng: withCoords[i + 1]._lng
+          });
+        }
+        globeGl.arcsData(arcs);
+      } else {
+        globeGl.arcsData([]);
+      }
+    }
+
+    function update3dPosition(lat, lng, litIndex) {
+      if (!globeGl) return;
+      const withCoords = playbackEntries.filter(
+        (e) => e._lat != null
+      );
+      const arcs = [];
+      for (let j = 0; j < withCoords.length - 1; j++) {
+        arcs.push({
+          startLat: withCoords[j]._lat,
+          startLng: withCoords[j]._lng,
+          endLat: withCoords[j + 1]._lat,
+          endLng: withCoords[j + 1]._lng
+        });
+      }
+      let showArcs = arcs.slice(0, litIndex || 0);
+      if (litIndex != null && litIndex < withCoords.length - 1) {
+        const end = withCoords[litIndex + 1];
+        if (
+          Math.abs(lat - end._lat) > 1e-6 ||
+          Math.abs(lng - end._lng) > 1e-6
+        ) {
+          showArcs = showArcs.concat([
+            {
+              startLat: withCoords[litIndex]._lat,
+              startLng: withCoords[litIndex]._lng,
+              endLat: lat,
+              endLng: lng
+            }
+          ]);
+        }
+      }
+      globeGl.arcsData(showArcs);
+      const customData = [{ lat, lng, alt: 0.08, type: "point" }];
+      if (litIndex != null && litIndex >= 0) {
+        for (let k = 0; k <= litIndex && k < withCoords.length; k++) {
+          customData.push({
+            lat: withCoords[k]._lat,
+            lng: withCoords[k]._lng,
+            type: "ring"
+          });
+        }
+      }
+      globeGl.customLayerData(customData);
+      try {
+        globeGl.pointOfView({ lat, lng, altitude: 0.4 }, 0);
+      } catch (e) {}
+    }
+
+    function renderMonthChart() {
+      if (!appState.pivot || !appState.pivot.by_year_month) return;
+      const canvas = document.getElementById("chart-month");
+      const yearSelect = document.getElementById("month-year-select");
+      if (!canvas || !yearSelect) return;
+
+      const years = Object.keys(appState.pivot.by_year_month).sort((a, b) => Number(b) - Number(a));
+      let selectedYear = appState.monthYear || (years.length ? years[0] : null);
+      if (selectedYear && !years.includes(selectedYear)) selectedYear = years[0] || null;
+      if (years.length && !appState.monthYear) appState.monthYear = years[0];
+      if (selectedYear) appState.monthYear = selectedYear;
+
+      yearSelect.innerHTML = '<option value="">—</option>' + years.map((y) => `<option value="${y}" ${y === selectedYear ? "selected" : ""}>${y} 年</option>`).join("");
+
+      const mode = appState.monthMode || "cities";
+      const data = selectedYear ? appState.pivot.by_year_month[selectedYear] : null;
+      const labels = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
+      const values = data ? (mode === "cities" ? data.cities : data.distance) : [];
+
+      if (appState.chartMonth) {
+        appState.chartMonth.destroy();
+        appState.chartMonth = null;
+      }
+      if (!data) return;
+
+      appState.chartMonth = new Chart(canvas.getContext("2d"), {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: mode === "cities" ? "城市数" : "公里",
+              data: values,
+              backgroundColor: "#38bdf8"
+            }
+          ]
+        },
+        options: {
+          indexAxis: "y",
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { enabled: true } },
+          scales: {
+            x: { beginAtZero: true, grid: { color: "rgba(148,163,184,0.2)" }, ticks: { color: "#e2e8f0" } },
+            y: { grid: { display: false }, ticks: { color: "#e2e8f0" } }
+          },
+          animation: { duration: 800, easing: "easeOutCubic" }
+        }
+      });
+    }
+
+    function renderLatLngDurationChart() {
+      const canvas = document.getElementById("chart-lat-lng-duration");
+      if (!canvas || !appState.pivot) return;
+      const mode = appState.latLngMode || "lat";
+      const list = mode === "lat" ? (appState.pivot.by_lat_duration || []) : (appState.pivot.by_lng_duration || []);
+
+      if (appState.chartLatLngDuration) {
+        appState.chartLatLngDuration.destroy();
+        appState.chartLatLngDuration = null;
+      }
+      if (!list.length) return;
+
+      const labels = list.map((x) => x.label);
+      const values = list.map((x) => x.days);
+
+      appState.chartLatLngDuration = new Chart(canvas.getContext("2d"), {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [{ label: "停留天数", data: values, backgroundColor: "#38bdf8" }]
+        },
+        options: {
+          indexAxis: "y",
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { enabled: true } },
+          scales: {
+            x: { beginAtZero: true, grid: { color: "rgba(148,163,184,0.2)" }, ticks: { color: "#e2e8f0" } },
+            y: { grid: { display: false }, ticks: { color: "#e2e8f0" } }
+          },
+          animation: { duration: 800, easing: "easeOutCubic" }
+        }
+      });
+    }
+
+    function renderCityDurationPie() {
+      const canvas = document.getElementById("chart-city-duration-pie");
+      if (!canvas || !appState.pivot) return;
+      const list = appState.pivot.city_duration_pie || [];
+
+      if (appState.chartCityDurationPie) {
+        appState.chartCityDurationPie.destroy();
+        appState.chartCityDurationPie = null;
+      }
+      if (!list.length) return;
+
+      const colors = ["#6c9ef8", "#8bb3ff", "#4fc3f7", "#81c784", "#ffb74d", "#ba68c8", "#78909c", "#ab47bc"];
+      appState.chartCityDurationPie = new Chart(canvas.getContext("2d"), {
+        type: "pie",
+        data: {
+          labels: list.map((x) => x.name),
+          datasets: [
+            {
+              data: list.map((x) => x.value),
+              backgroundColor: list.map((_, i) => colors[i % colors.length]),
+              borderColor: "#020617",
+              borderWidth: 2
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: "bottom", labels: { boxWidth: 12, color: "#e2e8f0", font: { size: 11 } } },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => {
+                  const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                  const pct = total > 0 ? ((ctx.raw / total) * 100).toFixed(1) : 0;
+                  return `${ctx.label}: ${ctx.raw} 天 (${pct}%)`;
+                }
+              }
+            }
+          },
+          animation: { duration: 800 }
+        }
+      });
+    }
+
+    function renderAll() {
+      renderTable();
+      updateEntrySubmitButton();
+      renderSummary();
+      renderYearChart();
+      renderCityPivotChart();
+      renderMonthChart();
+      renderLatLngDurationChart();
+      renderCountryPie();
+      renderCityDurationPie();
+      renderMap();
+    }
+
+    // ================== 事件绑定：表单 / 导入 / Tab / 地图按钮 ==================
+
+    // 注册 Service Worker
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
+    }
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      // 加载离线城市库
+      await loadCitiesDB();
+
+      // 日期输入：使用 flatpickr 提供统一的日历体验
+      if (window.flatpickr) {
+        flatpickr("#entry-date", {
+          dateFormat: "Y-m-d",
+          locale: flatpickr.l10ns.zh
+        });
+        flatpickr("#map-start-date", {
+          dateFormat: "Y-m-d",
+          locale: flatpickr.l10ns.zh
+        });
+        flatpickr("#map-end-date", {
+          dateFormat: "Y-m-d",
+          locale: flatpickr.l10ns.zh
+        });
+      }
+
+      // 头像上传
+      const avatarInput = document.getElementById("avatar-upload");
+      if (avatarInput) {
+        avatarInput.addEventListener("change", (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+          if (!/^image\//.test(file.type)) {
+            alert("请选择图片文件。");
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const dataUrl = ev.target?.result;
+            if (typeof dataUrl === "string") {
+              appState.avatarDataUrl = dataUrl;
+              const wrap = document.getElementById("avatar-preview");
+              if (wrap) {
+                wrap.innerHTML =
+                  '<img src="' +
+                  dataUrl +
+                  '" alt="avatar" class="w-full h-full object-cover" />';
+              }
+              try {
+                localStorage.setItem(AVATAR_STORAGE_KEY, dataUrl);
+              } catch (err) {
+                console.warn("保存头像失败：", err);
+              }
+            }
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      // Tab 切换：数据输入 / 透视 / 可视化
+      const tabButtons = document.querySelectorAll(".tab-btn");
+      const tabSections = {
+        input: document.getElementById("tab-input"),
+        stats: document.getElementById("tab-stats"),
+        visual: document.getElementById("tab-visual")
+      };
+
+      tabButtons.forEach(btn => {
+        btn.addEventListener("click", () => {
+          const tab = btn.getAttribute("data-tab");
+          tabButtons.forEach(b => {
+            if (b === btn) {
+              b.classList.add("border-sky-500", "text-sky-400");
+              b.classList.remove("border-transparent", "text-slate-300");
+            } else {
+              b.classList.remove("border-sky-500", "text-sky-400");
+              b.classList.add("border-transparent", "text-slate-300");
+            }
+          });
+          Object.keys(tabSections).forEach(key => {
+            if (key === tab) {
+              tabSections[key].classList.add("active");
+            } else {
+              tabSections[key].classList.remove("active");
+            }
+          });
+          if (tab === "stats" || tab === "visual") {
+            // 切换到统计或可视化时，确保视图基于最新数据
+            renderAll();
+          }
+          // 首次进入“可视化 / 导出”时，确保 2D 地图尺寸正确并以中国为中心
+          if (tab === "visual") {
+            initMap();
+            if (appState.map) {
+              setTimeout(() => {
+                appState.map.invalidateSize();
+                appState.map.setView([35, 105], 4);
+              }, 50);
+            }
+          }
+        });
+      });
+
+      // 年份视图切换（城市数 / 距离）
+      const yearModeBtns = document.getElementById("year-mode-btns");
+      if (yearModeBtns) {
+        yearModeBtns.addEventListener("click", (e) => {
+          const btn = e.target.closest("button[data-mode]");
+          if (!btn) return;
+          const mode = btn.getAttribute("data-mode");
+          appState.yearMode = mode === "distance" ? "distance" : "cities";
+          Array.from(yearModeBtns.querySelectorAll("button")).forEach((b) => {
+            const m = b.getAttribute("data-mode");
+            if (m === appState.yearMode) {
+              b.classList.add("bg-sky-500", "text-white");
+              b.classList.remove("bg-slate-800", "text-slate-200");
+            } else {
+              b.classList.remove("bg-sky-500", "text-white");
+              b.classList.add("bg-slate-800", "text-slate-200");
+            }
+          });
+          renderYearChart();
+        });
+      }
+
+      // 城市视图切换（停留天数 / 访问次数）
+      const cityModeBtns = document.getElementById("city-mode-btns");
+      if (cityModeBtns) {
+        cityModeBtns.addEventListener("click", (e) => {
+          const btn = e.target.closest("button[data-mode]");
+          if (!btn) return;
+          const mode = btn.getAttribute("data-mode");
+          appState.cityMode = mode === "visits" ? "visits" : "duration";
+          Array.from(cityModeBtns.querySelectorAll("button")).forEach((b) => {
+            const m = b.getAttribute("data-mode");
+            if (m === appState.cityMode) {
+              b.classList.add("bg-sky-500", "text-white");
+              b.classList.remove("bg-slate-800", "text-slate-200");
+            } else {
+              b.classList.remove("bg-sky-500", "text-white");
+              b.classList.add("bg-slate-800", "text-slate-200");
+            }
+          });
+          renderCityPivotChart();
+        });
+      }
+
+      // 按月份：年份下拉 + 城市数/里程数切换
+      const monthYearSelect = document.getElementById("month-year-select");
+      if (monthYearSelect) {
+        monthYearSelect.addEventListener("change", () => {
+          appState.monthYear = monthYearSelect.value || null;
+          renderMonthChart();
+        });
+      }
+      const monthModeBtns = document.getElementById("month-mode-btns");
+      if (monthModeBtns) {
+        monthModeBtns.addEventListener("click", (e) => {
+          const btn = e.target.closest("button[data-mode]");
+          if (!btn) return;
+          const mode = btn.getAttribute("data-mode");
+          appState.monthMode = mode === "distance" ? "distance" : "cities";
+          Array.from(monthModeBtns.querySelectorAll("button")).forEach((b) => {
+            const m = b.getAttribute("data-mode");
+            if (m === appState.monthMode) {
+              b.classList.add("bg-sky-500", "text-white");
+              b.classList.remove("bg-slate-800", "text-slate-200");
+            } else {
+              b.classList.remove("bg-sky-500", "text-white");
+              b.classList.add("bg-slate-800", "text-slate-200");
+            }
+          });
+          renderMonthChart();
+        });
+      }
+
+      const latlngModeBtns = document.getElementById("latlng-mode-btns");
+      if (latlngModeBtns) {
+        latlngModeBtns.addEventListener("click", (e) => {
+          const btn = e.target.closest("button[data-mode]");
+          if (!btn) return;
+          const mode = btn.getAttribute("data-mode");
+          appState.latLngMode = mode === "lng" ? "lng" : "lat";
+          Array.from(latlngModeBtns.querySelectorAll("button")).forEach((b) => {
+            const m = b.getAttribute("data-mode");
+            if (m === appState.latLngMode) {
+              b.classList.add("bg-sky-500", "text-white");
+              b.classList.remove("bg-slate-800", "text-slate-200");
+            } else {
+              b.classList.remove("bg-sky-500", "text-white");
+              b.classList.add("bg-slate-800", "text-slate-200");
+            }
+          });
+          renderLatLngDurationChart();
+        });
+      }
+
+      // 播放控制：加载路线 / 播放 / 暂停
+      const btnLoad = document.getElementById("map-load");
+      const btnPlay = document.getElementById("map-play");
+      const btnPause = document.getElementById("map-pause");
+      if (btnLoad) btnLoad.addEventListener("click", loadRoute);
+      if (btnPlay)
+        btnPlay.addEventListener("click", () => {
+          if (playbackEntries.length === 0) return;
+          if (playbackRaf) return;
+          runPlayback();
+        });
+      if (btnPause)
+        btnPause.addEventListener("click", () => {
+          if (playbackRaf) {
+            cancelAnimationFrame(playbackRaf);
+            playbackRaf = null;
+          }
+          setTimeNodeLabel(null);
+        });
+
+      // 导出视频（2D / 3D），沿用原项目前端录屏逻辑
+      (function setupExportVideo() {
+        const btnExport = document.getElementById("map-export-video");
+        if (!btnExport) return;
+        let recordCanvas = null,
+          recordCtx = null,
+          mediaRecorder = null,
+          captureInterval = null,
+          chunks = [];
+
+        function stopRecording() {
+          if (captureInterval) {
+            clearInterval(captureInterval);
+            captureInterval = null;
+          }
+          if (mediaRecorder && mediaRecorder.state === "recording") {
+            mediaRecorder.stop();
+          }
+          playbackOnEnd = null;
+          isRecordingVideo = false;
+        }
+
+        btnExport.addEventListener("click", () => {
+          if (playbackEntries.length === 0) {
+            alert("请先加载路线");
+            return;
+          }
+          if (playbackRaf) {
+            alert("请先暂停播放再导出");
+            return;
+          }
+          const is3d =
+            document
+              .getElementById("globe-container")
+              ?.classList.contains("active") || false;
+          chunks = [];
+          isRecordingVideo = true;
+          if (is3d) {
+            const canvas = document.querySelector(
+              "#globe-container canvas"
+            );
+            if (!canvas) {
+              alert("请先切换到 3D 视图一次以初始化地球");
+              return;
+            }
+            try {
+              // 3D 录屏：提高一点帧率以获得更顺滑的动画
+              const stream = canvas.captureStream(40);
+              // 优先尝试 mp4，失败则回退到 webm
+              let mimeType = "video/webm;codecs=vp9";
+              let ext = "webm";
+              if (window.MediaRecorder && MediaRecorder.isTypeSupported("video/mp4;codecs=avc1")) {
+                mimeType = "video/mp4;codecs=avc1";
+                ext = "mp4";
+              }
+              mediaRecorder = new MediaRecorder(stream, {
+                mimeType,
+                videoBitsPerSecond: 2500000
+              });
+              mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size) chunks.push(e.data);
+              };
+              mediaRecorder.onstop = () => {
+                const blob = new Blob(chunks, {
+                  type: mimeType
+                });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = "mypace-globe." + ext;
+                a.click();
+                URL.revokeObjectURL(a.href);
+              };
+              mediaRecorder.start();
+              playbackOnEnd = () => {
+                stopRecording();
+              };
+              runPlayback();
+            } catch (e) {
+              alert("导出失败: " + (e.message || e));
+            }
+          } else {
+            const mapEl = document.getElementById("map");
+            const w = mapEl.offsetWidth || 800;
+            const h = mapEl.offsetHeight || 600;
+            // 为避免轨迹与底图错位，这里采用与屏幕一致的分辨率录制
+            recordCanvas = document.createElement("canvas");
+            recordCanvas.width = w;
+            recordCanvas.height = h;
+            recordCtx = recordCanvas.getContext("2d");
+            try {
+              // 2D 录屏：提高帧率以获得更顺滑的动画
+              const stream = recordCanvas.captureStream(40);
+              let mimeType = "video/webm;codecs=vp9";
+              let ext = "webm";
+              if (window.MediaRecorder && MediaRecorder.isTypeSupported("video/mp4;codecs=avc1")) {
+                mimeType = "video/mp4;codecs=avc1";
+                ext = "mp4";
+              }
+              mediaRecorder = new MediaRecorder(stream, {
+                mimeType,
+                videoBitsPerSecond: 1500000
+              });
+              mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size) chunks.push(e.data);
+              };
+              mediaRecorder.onstop = () => {
+                const blob = new Blob(chunks, {
+                  type: mimeType
+                });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = "mypace-map." + ext;
+                a.click();
+                URL.revokeObjectURL(a.href);
+                recordCanvas = null;
+                recordCtx = null;
+              };
+              mediaRecorder.start();
+              playbackOnEnd = () => {
+                stopRecording();
+              };
+              runPlayback();
+              // 缩短截图间隔，让导出的视频更流畅（会更吃 CPU）
+              captureInterval = setInterval(() => {
+                if (!recordCtx || !window.html2canvas) return;
+                html2canvas(appState.map.getContainer(), {
+                  useCORS: true,
+                  allowTaint: true,
+                  width: w,
+                  height: h
+                }).then((canvas) => {
+                  recordCtx.drawImage(canvas, 0, 0, w, h);
+                });
+              }, 25);
+            } catch (e) {
+              alert("导出失败: " + (e.message || e));
+            }
+          }
+        });
+      })();
+
+      // 倍速按钮：统一控制 2D / 3D 播放速度
+      const speedBtns = document.querySelectorAll("#speed-btns button[data-speed]");
+      if (speedBtns.length) {
+        speedBtns.forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const speed = parseInt(btn.getAttribute("data-speed"), 10) || 1;
+            playbackSpeed = speed;
+            speedBtns.forEach((b) => {
+              b.classList.remove("bg-sky-500", "text-white");
+              b.classList.add("bg-slate-800", "text-slate-200");
+            });
+            btn.classList.add("bg-sky-500", "text-white");
+            btn.classList.remove("bg-slate-800", "text-slate-200");
+          });
+        });
+      }
+      // 2D / 3D 视图切换
+      const btn2d = document.getElementById("btn-map-2d");
+      const btn3d = document.getElementById("btn-map-3d");
+      const mapContainer = document.getElementById("map");
+      const globeContainer = document.getElementById("globe-container");
+      if (btn2d && btn3d && mapContainer && globeContainer) {
+        btn2d.addEventListener("click", () => {
+          btn2d.classList.add("bg-sky-500", "text-white");
+          btn2d.classList.remove("bg-slate-800", "text-slate-200");
+          btn3d.classList.remove("bg-sky-500", "text-white");
+          btn3d.classList.add("bg-slate-800", "text-slate-200");
+          mapContainer.classList.remove("hidden");
+          globeContainer.classList.add("hidden");
+          globeContainer.classList.remove("active");
+          // 修复 Leaflet 在容器隐藏时初始化导致的“只显示一角”问题
+          if (appState.map) {
+            setTimeout(() => {
+              appState.map.invalidateSize();
+              appState.map.setView([35, 105], 4);
+            }, 50);
+          }
+        });
+        btn3d.addEventListener("click", () => {
+          btn3d.classList.add("bg-sky-500", "text-white");
+          btn3d.classList.remove("bg-slate-800", "text-slate-200");
+          btn2d.classList.remove("bg-sky-500", "text-white");
+          btn2d.classList.add("bg-slate-800", "text-slate-200");
+          mapContainer.classList.add("hidden");
+          globeContainer.classList.remove("hidden");
+          globeContainer.classList.add("active");
+
+          if (!globeGl) {
+            const container = globeContainer;
+            setTimeout(() => {
+              if (typeof Globe === "undefined") {
+                console.error("Globe 未加载");
+                return;
+              }
+              const w =
+                container.offsetWidth ||
+                container.clientWidth ||
+                800;
+              const h =
+                container.offsetHeight ||
+                container.clientHeight ||
+                420;
+              globeGl = Globe()(container).width(w).height(h);
+              try {
+                globeGl.globeImageUrl("./assets/earth-blue-marble.jpg");
+              } catch (e) {}
+              globeGl.customLayerData([]);
+              (function () {
+                const THREE_NS = window.THREE;
+                const pointGeom = new THREE_NS.SphereGeometry(0.32, 22, 22);
+                const pointMat = new THREE_NS.MeshBasicMaterial({
+                  color: 0xffffff
+                });
+                const ringGeom = new THREE_NS.RingGeometry(
+                  0.08,
+                  0.12,
+                  24
+                );
+                const ringMat = new THREE_NS.MeshBasicMaterial({
+                  color: 0xffffff,
+                  side: THREE_NS.DoubleSide
+                });
+
+                globeGl.customThreeObject(function (d) {
+                  if (d.type === "ring") {
+                    return new THREE_NS.Mesh(
+                      ringGeom,
+                      ringMat.clone()
+                    );
+                  }
+                  return new THREE_NS.Mesh(
+                    pointGeom,
+                    pointMat.clone()
+                  );
+                });
+                globeGl.customThreeObjectUpdate(function (obj, d) {
+                  let pos;
+                  if (typeof globeGl.getCoords === "function") {
+                    try {
+                      const alt =
+                        d.type === "ring"
+                          ? 0.01
+                          : d.alt != null
+                          ? d.alt
+                          : 0.08;
+                      pos = globeGl.getCoords(
+                        d.lat,
+                        d.lng,
+                        alt
+                      );
+                      if (pos) Object.assign(obj.position, pos);
+                    } catch (e) {
+                      pos = null;
+                    }
+                  }
+                  if (
+                    !pos ||
+                    (obj.position.x === 0 &&
+                      obj.position.y === 0 &&
+                      obj.position.z === 0)
+                  ) {
+                    const r =
+                      1 +
+                      (d.type === "ring"
+                        ? 0.01
+                        : d.alt != null
+                        ? d.alt
+                        : 0.08);
+                    const latRad = (d.lat * Math.PI) / 180;
+                    const lngRad = (d.lng * Math.PI) / 180;
+                    obj.position.x =
+                      r * Math.cos(latRad) * Math.cos(lngRad);
+                    obj.position.y = r * Math.sin(latRad);
+                    obj.position.z =
+                      r * Math.cos(latRad) * Math.sin(lngRad);
+                  }
+                  if (d.type === "ring") {
+                    const p = obj.position.clone().normalize();
+                    obj.quaternion.setFromUnitVectors(
+                      new THREE_NS.Vector3(0, 0, 1),
+                      p
+                    );
+                  }
+                });
+              })();
+              globeGl.arcStroke(0.12);
+              globeGl.arcColor(function () {
+                return "rgba(100,180,255,0.9)";
+              });
+              globeGl.arcAltitude(0);
+              if (globeGl.arcCurveResolution)
+                globeGl.arcCurveResolution(64);
+              globeGl
+                .arcDashLength(1)
+                .arcDashGap(0)
+                .arcDashAnimateTime(0);
+              // 初始化视角：以中国为中心
+              try {
+                globeGl.pointOfView(
+                  { lat: 35, lng: 105, altitude: 2.2 },
+                  0
+                );
+              } catch (e) {}
+              updateGlobeData();
+              window.addEventListener(
+                "resize",
+                function resizeGlobe() {
+                  if (
+                    globeGl &&
+                    globeContainer.classList.contains("active")
+                  ) {
+                    const c = globeContainer;
+                    globeGl
+                      .width(c.offsetWidth)
+                      .height(c.offsetHeight);
+                  }
+                }
+              );
+            }, 150);
+          } else {
+            updateGlobeData();
+          }
+        });
+      }
+
+      // 表单提交：新增条目（必须从城市下拉中选择以获得经纬度）
+      const form = document.getElementById("entry-form");
+      form.addEventListener("submit", e => {
+        e.preventDefault();
+        const date = document.getElementById("entry-date").value;
+        const city = document.getElementById("entry-city").value.trim();
+        const latStr = document.getElementById("entry-lat").value.trim();
+        const lngStr = document.getElementById("entry-lng").value.trim();
+        const msg = document.getElementById("entry-message");
+
+        if (msg) msg.classList.add("hidden");
+
+        if (!date || !city) {
+          alert("请至少填写日期和城市。");
+          return;
+        }
+
+        const datetime = `${date}T00:00:00`;
+
+        if (!latStr || !lngStr) {
+          if (msg) {
+            msg.textContent = "请从下方下拉列表中选择地点，不能手输未检索到的城市。";
+            msg.classList.remove("hidden");
+          } else {
+            alert("请从下方下拉列表中选择地点，不能手输未检索到的城市。");
+          }
+          return;
+        }
+
+        const lat = Number(latStr);
+        const lng = Number(lngStr);
+        const country = (document.getElementById("entry-country") || {}).value || "";
+
+        appState.entries.push({
+          id: crypto.randomUUID(),
+          datetime,
+          city,
+          lat: !isNaN(lat) ? lat : null,
+          lng: !isNaN(lng) ? lng : null,
+          country
+        });
+
+        saveToStorage();
+        renderAll();
+
+        form.reset();
+        document.getElementById("entry-lat").value = "";
+        document.getElementById("entry-lng").value = "";
+      });
+
+      // 城市输入：监听输入，做自动补全并清空旧经纬度
+      const cityInput = document.getElementById("entry-city");
+      const cityDropdown = document.getElementById("entry-city-dropdown");
+      cityInput.addEventListener("input", () => {
+        document.getElementById("entry-lat").value = "";
+        document.getElementById("entry-lng").value = "";
+        clearTimeout(cityAutocompleteTimer);
+        const q = cityInput.value.trim();
+        cityAutocompleteTimer = setTimeout(() => fetchCitySuggestions(q), 350);
+      });
+      cityInput.addEventListener("keydown", (e) => {
+        if (!cityAutocompleteList.length) return;
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (cityAutocompleteSelected >= 0 && cityAutocompleteSelected < cityAutocompleteList.length) {
+            selectCity(cityAutocompleteList[cityAutocompleteSelected]);
+          }
+          return;
+        }
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          cityAutocompleteSelected =
+            (cityAutocompleteSelected + 1 + cityAutocompleteList.length) % cityAutocompleteList.length;
+          renderCityDropdown();
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          cityAutocompleteSelected =
+            (cityAutocompleteSelected - 1 + cityAutocompleteList.length) % cityAutocompleteList.length;
+          renderCityDropdown();
+          return;
+        }
+      });
+      document.addEventListener("click", (e) => {
+        if (!e.target.closest("#entry-city-wrapper")) {
+          cityAutocompleteList = [];
+          if (cityDropdown) {
+            cityDropdown.innerHTML = "";
+            cityDropdown.classList.add("hidden");
+          }
+        }
+      });
+
+      // 导入 JSON（增量更新）
+      const fileInput = document.getElementById("file-input");
+      fileInput.addEventListener("change", e => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = evt => {
+          try {
+            const text = evt.target.result;
+            const raw = JSON.parse(text);
+            let arr;
+            if (Array.isArray(raw)) {
+              arr = raw;
+            } else if (raw && Array.isArray(raw.entries)) {
+              arr = raw.entries;
+            } else {
+              setStatus("JSON 结构不符合预期，应为数组或包含 entries 数组的对象。", true);
+              return;
+            }
+
+            // 增量合并：把新数据 append 到现有 entries 后面
+            for (const e of arr) {
+              appState.entries.push({
+                id: crypto.randomUUID(),
+                datetime: e.datetime || "",
+                city: e.city || "",
+                lat: e.lat != null ? Number(e.lat) : (e._lat != null ? Number(e._lat) : null),
+                lng: e.lng != null ? Number(e.lng) : (e._lng != null ? Number(e._lng) : null),
+                country: e.country || ""
+              });
+            }
+
+            saveToStorage();
+            renderAll();
+            setStatus(`已增量导入 ${arr.length} 条记录，并写入 LocalStorage。`);
+          } catch (err) {
+            console.error(err);
+            setStatus("JSON 解析失败，请检查文件格式。", true);
+          } finally {
+            // 清空 input 以便下次选择同一个文件时也能触发 change
+            fileInput.value = "";
+          }
+        };
+        reader.onerror = () => {
+          setStatus("读取文件失败。", true);
+        };
+        reader.readAsText(file, "utf-8");
+      });
+
+      // 清空 LocalStorage
+      document.getElementById("btn-clear-storage").addEventListener("click", () => {
+        if (!confirm("确定要清空本地保存的所有足迹数据吗？")) return;
+        localStorage.removeItem(STORAGE_KEY);
+        appState.entries = [];
+        renderAll();
+        setStatus("已清空本地数据。");
+      });
+
+      // 地图“适配全部足迹”：默认设为录入的首尾日期，加载路线并适配视图
+      document.getElementById("btn-fit-map").addEventListener("click", () => {
+        updateMapDateRangeFromEntries();
+        loadRoute();
+        if (appState.routeLayer && appState.map) {
+          appState.map.fitBounds(appState.routeLayer.getBounds(), {
+            padding: [40, 40]
+          });
+        } else if (appState.map) {
+          appState.map.setView([35, 105], 4);
+        }
+      });
+      loadFromStorage();
+    });
+  </script>
+</body>
+</html>
+
