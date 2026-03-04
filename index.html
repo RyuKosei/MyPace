@@ -172,6 +172,19 @@
               <span>选择 JSON 文件</span>
               <input id="file-input" type="file" accept="application/json" class="hidden" />
             </label>
+            <div class="pt-2 border-t border-slate-700 mt-2 space-y-2">
+              <h3 class="text-sm font-medium">导出 JSON</h3>
+              <p class="text-xs text-slate-300">
+                将当前所有足迹导出为 JSON 文件，方便备份或迁移。
+              </p>
+              <button
+                id="btn-export-json"
+                type="button"
+                class="inline-flex items-center justify-center px-3 py-2 rounded-md bg-slate-700 hover:bg-slate-600 text-xs font-medium"
+              >
+                下载 JSON 导出文件
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1441,7 +1454,7 @@
             const line1 = `你平均每 ${avg} 天前往一个不同城市。`;
             const line2 =
               stayDays < avg
-                ? `现在在「${cityName}」已停留 ${stayDays} 天，还在适应这里的环境吗？`
+                ? `现在在「${cityName}」已停留 ${stayDays} 天，还适应这里的天气吗？`
                 : `现在在「${cityName}」已停留 ${stayDays} 天，是时候出去走走了。`;
             currentLine = `${line1} ${line2}`;
           }
@@ -2974,6 +2987,38 @@
         document.getElementById("entry-lat").value = "";
         document.getElementById("entry-lng").value = "";
       });
+
+      // 导出 JSON：将当前足迹导出为简洁的 JSON 文件
+      const btnExportJson = document.getElementById("btn-export-json");
+      if (btnExportJson) {
+        btnExportJson.addEventListener("click", () => {
+          if (!appState.entries.length) {
+            alert("当前没有足迹可以导出。");
+            return;
+          }
+          const payload = appState.entries.map(e => ({
+            id: e.id,
+            datetime: e.datetime,
+            city: e.city,
+            lat: e.lat,
+            lng: e.lng,
+            country: e.country || ""
+          }));
+          const blob = new Blob(
+            [JSON.stringify(payload, null, 2)],
+            { type: "application/json;charset=utf-8" }
+          );
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+          a.href = url;
+          a.download = `entries_export_${today}.json`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        });
+      }
 
       // 城市输入：监听输入，做自动补全并清空旧经纬度
       const cityInput = document.getElementById("entry-city");
