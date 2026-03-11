@@ -229,9 +229,6 @@
     <section id="tab-stats" class="tab-section">
       <div class="mb-4">
         <h2 class="text-lg font-medium mb-1">数据透视概览</h2>
-        <p class="text-xs md:text-sm text-slate-300">
-          按时间和城市查看足迹统计情况。
-        </p>
       </div>
 
       <!-- 第一排小格子：条目数 / 城市数 / 国家数 / 总距离 -->
@@ -274,8 +271,17 @@
         </div>
       </div>
 
-      <!-- 整行内容：出行节奏 / 那年今日（竖向排列） -->
+      <!-- 整行内容：交通时长 / 出行节奏 / 那年今日（竖向排列） -->
       <div class="grid grid-cols-1 gap-3 mb-4">
+        <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
+          <div class="text-xs text-slate-400 mb-1">交通时长</div>
+          <div
+            id="stat-travel-time"
+            class="text-xs md:text-sm text-slate-200 leading-relaxed"
+          >
+            —
+          </div>
+        </div>
         <div class="bg-slate-800/80 border border-slate-700 rounded-xl p-3 md:p-4">
           <div class="text-xs text-slate-400 mb-1">出行节奏</div>
           <div
@@ -1412,6 +1418,76 @@
       setExtreme("stat-easternmost", pivot && pivot.easternmost);
       setExtreme("stat-westernmost", pivot && pivot.westernmost);
 
+      // 交通时长（估算）
+      const travelTimeEl = document.getElementById("stat-travel-time");
+
+      const sortedForTime = [...entries]
+        .filter((e) => e.datetime && e.lat != null && e.lng != null)
+        .sort((a, b) => {
+          const da = parseDate(a.datetime) || new Date(0);
+          const db = parseDate(b.datetime) || new Date(0);
+          return da - db;
+        });
+
+      if (travelTimeEl) {
+        if (sortedForTime.length < 2) {
+          travelTimeEl.textContent = "—";
+        } else {
+          const firstD = parseDate(sortedForTime[0].datetime);
+          const lastD = parseDate(sortedForTime[sortedForTime.length - 1].datetime);
+          const years = Math.max(
+            1,
+            Math.ceil(Math.max(1, (lastD - firstD) / 86400000) / 365)
+          );
+
+          const PLANE_THRESHOLD_KM = 900; // 超过该距离认为更可能坐飞机
+          const PLANE_KMH = 820; // 常见巡航速度
+          const TRAIN_KMH = 280; // 高铁均速（含停站的粗略均值）
+          const FIXED_OVERHEAD_H = 0.35; // 每段固定偏置：进出站/安检/等待等
+          const VARIABLE_OVERHEAD_RATE = 0.06; // 距离越长，偏置略增加（小时/千公里）
+
+          let totalHours = 0;
+          for (let i = 1; i < sortedForTime.length; i++) {
+            const a = sortedForTime[i - 1];
+            const b = sortedForTime[i];
+            const km = haversineKm(a.lat, a.lng, b.lat, b.lng);
+            if (!Number.isFinite(km) || km <= 0) continue;
+            const isPlane = km >= PLANE_THRESHOLD_KM;
+            const base = km / (isPlane ? PLANE_KMH : TRAIN_KMH);
+            const overhead = FIXED_OVERHEAD_H + (km / 1000) * VARIABLE_OVERHEAD_RATE;
+            totalHours += base + overhead;
+          }
+
+          const hoursRounded = Math.max(0, totalHours);
+          const hoursText = hoursRounded.toFixed(1);
+
+          // 随机换算：每次刷新页面随机出现一条
+          const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+          const equivalents = [
+            () => {
+              const songs = Math.round(hoursRounded * 60 / 4);
+              return `大概听完了 ${songs.toLocaleString()} 首歌。`;
+            },
+            () => {
+              const movies = Math.round(hoursRounded / 2);
+              return `相当于看了 ${movies.toLocaleString()} 场电影。`;
+            },
+            () => {
+              const episodes = Math.round(hoursRounded / 0.75);
+              return `差不多刷完了 ${episodes.toLocaleString()} 集网剧。`;
+            },
+            () => {
+              const sleep = Math.round(hoursRounded / 8);
+              return `大约等于睡了 ${sleep.toLocaleString()} 顿好觉。`;
+            }
+          ];
+
+          const eq = pick(equivalents)();
+          travelTimeEl.textContent =
+            `你在过去的 ${years} 年里，大约花了 ${hoursText} 小时在路上。${eq}`;
+        }
+      }
+
       // 出行节奏与「那年今日」
       const avgDetailEl = document.getElementById("stat-avg-detail");
       const todayHistoryEl = document.getElementById("stat-today-history");
@@ -1516,7 +1592,6 @@
             }
 
             if (!stayCity || !stayCity.trim()) continue;
-            if (currentCity && stayCity === currentCity) continue;
 
             const shortName = getCityShortName(stayCity) || stayCity;
             if (!byCity.has(shortName)) {
@@ -1532,8 +1607,7 @@
           }
 
           if (lines.length) {
-            todayHistoryEl.textContent =
-              lines.join("\n");
+            todayHistoryEl.textContent = lines.join("\n");
           } else {
             todayHistoryEl.textContent = "那年今日：暂无历史足迹。";
           }
@@ -2671,8 +2745,8 @@
               return;
             }
             try {
-              // 3D 录屏：提高一点帧率以获得更顺滑的动画
-              const stream = canvas.captureStream(40);
+              // 3D 录屏：提高到 60fps 以获得更顺滑的动画
+              const stream = canvas.captureStream(60);
               // 优先尝试 mp4，失败则回退到 webm
               let mimeType = "video/webm;codecs=vp9";
               let ext = "webm";
@@ -2709,14 +2783,15 @@
             const mapEl = document.getElementById("map");
             const w = mapEl.offsetWidth || 800;
             const h = mapEl.offsetHeight || 600;
-            // 为避免轨迹与底图错位，这里采用与屏幕一致的分辨率录制
+            const dpr = window.devicePixelRatio || 1;
+            // 为避免轨迹与底图错位，这里采用视图尺寸 * 像素比录制，提升清晰度
             recordCanvas = document.createElement("canvas");
-            recordCanvas.width = w;
-            recordCanvas.height = h;
+            recordCanvas.width = w * dpr;
+            recordCanvas.height = h * dpr;
             recordCtx = recordCanvas.getContext("2d");
             try {
-              // 2D 录屏：提高帧率以获得更顺滑的动画
-              const stream = recordCanvas.captureStream(40);
+              // 2D 录屏：提高到 60fps 以获得更顺滑的动画
+              const stream = recordCanvas.captureStream(60);
               let mimeType = "video/webm;codecs=vp9";
               let ext = "webm";
               if (window.MediaRecorder && MediaRecorder.isTypeSupported("video/mp4;codecs=avc1")) {
@@ -2754,11 +2829,18 @@
                   useCORS: true,
                   allowTaint: true,
                   width: w,
-                  height: h
+                  height: h,
+                  scale: dpr
                 }).then((canvas) => {
-                  recordCtx.drawImage(canvas, 0, 0, w, h);
+                  recordCtx.drawImage(
+                    canvas,
+                    0,
+                    0,
+                    recordCanvas.width,
+                    recordCanvas.height
+                  );
                 });
-              }, 25);
+              }, 16);
             } catch (e) {
               alert("导出失败: " + (e.message || e));
             }
